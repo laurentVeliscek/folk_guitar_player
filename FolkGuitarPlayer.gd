@@ -4,10 +4,15 @@ class_name FolkGuitarPlayer
 """
 Simulates realistic folk guitar strumming patterns with humanized MIDI output.
 
+The player interprets a chord grid by applying a rhythm pattern that loops
+throughout the entire grid. It adapts to chords of different sizes (4, 5, or 6 notes).
+
 Usage:
 	var player = FolkGuitarPlayer.new()
-	player.set_chord_grid(chords_array)
-	var midi_notes = player.generate()
+	player.rhythm_pattern = "DuDuD Du"  # Pattern to loop
+	player.step_beat_length = 0.5       # Each step is an eighth note
+	player.set_chord_grid(chords_array) # Array of GuitarChord objects
+	var midi_notes = player.generate()  # Returns MIDI note events
 """
 
 # Configuration globale - Paramètres de réalisme
@@ -29,6 +34,14 @@ var config = {
 
 # Grille d'accords
 var chord_grid: Array = []
+
+# Rhythm pattern to loop (defined at player level, not chord level)
+# D = Down fort, d = down léger, U = Up fort, u = up léger
+# ' ' = silence, '.' = laisser sonner, 'X' = muté
+var rhythm_pattern: String = "Dudu"
+
+# Duration of each pattern step in beats (e.g., 0.5 for eighth notes)
+var step_beat_length: float = 0.5
 
 # Notes MIDI en sortie
 var output_notes: Array = []
@@ -77,19 +90,18 @@ func generate() -> Array:
 		push_warning("FolkGuitarPlayer: Chord grid is empty")
 		return output_notes
 
-	# Trier les accords par position (au cas où)
+	if rhythm_pattern.empty():
+		push_warning("FolkGuitarPlayer: rhythm_pattern is empty")
+		return output_notes
+
+	# Trier les accords par time (au cas où)
 	var sorted_chords = chord_grid.duplicate()
-	sorted_chords.sort_custom(self, "_sort_by_position")
+	sorted_chords.sort_custom(self, "_sort_by_time")
 
 	# Traiter chaque accord
-	for i in range(sorted_chords.size()):
-		var chord = sorted_chords[i]
-		var start_time = chord.position
-
-		# Déterminer le temps de fin (prochain accord ou infini)
-		var end_time = INF
-		if i + 1 < sorted_chords.size():
-			end_time = sorted_chords[i + 1].position
+	for chord in sorted_chords:
+		var start_time = chord.time
+		var end_time = chord.time + chord.beat_length
 
 		_process_chord(chord, start_time, end_time)
 
@@ -111,23 +123,20 @@ func clear() -> void:
 # ============================================================================
 
 func _process_chord(chord: GuitarChord, start_time: float, end_time: float) -> void:
-	"""Traite un accord et génère toutes ses notes selon le pattern."""
+	"""Traite un accord et génère toutes ses notes selon le pattern du player."""
 
-	if chord.notes.empty():
-		push_warning("FolkGuitarPlayer: Chord has no notes at position %s" % start_time)
-		return
-
-	if chord.pattern.empty():
-		push_warning("FolkGuitarPlayer: Chord has empty pattern at position %s" % start_time)
+	var chord_notes = chord.get_notes()
+	if chord_notes.empty():
+		push_warning("FolkGuitarPlayer: Chord has no notes at time %s" % start_time)
 		return
 
 	var current_time = start_time
 	var pattern_index = 0
-	var beat_position = 0  # Position en beats depuis le début du morceau (pour accents)
+	var beat_position = start_time  # Position en beats depuis le début du morceau (pour accents)
 
-	# Boucler sur le pattern jusqu'à atteindre le prochain accord
+	# Boucler sur le rhythm_pattern du player jusqu'à la fin de l'accord
 	while current_time < end_time:
-		var symbol = chord.pattern[pattern_index]
+		var symbol = rhythm_pattern[pattern_index]
 
 		# Traiter le symbole
 		match symbol:
@@ -142,18 +151,18 @@ func _process_chord(chord: GuitarChord, start_time: float, end_time: float) -> v
 			'X':  # Muté
 				_generate_strum(chord, current_time, "down", config.velocity_down_base, beat_position, true)
 			'.':  # Laisser sonner
-				_prolong_active_notes(chord.step_length)
+				_prolong_active_notes(step_beat_length)
 			' ':  # Silence (ne rien faire, les notes s'arrêteront naturellement)
 				pass
 			_:
 				push_warning("FolkGuitarPlayer: Unknown pattern symbol '%s' at position %s" % [symbol, current_time])
 
 		# Avancer dans le temps
-		current_time += chord.step_length
-		beat_position += chord.step_length
-		pattern_index = (pattern_index + 1) % chord.pattern.length()
+		current_time += step_beat_length
+		beat_position += step_beat_length
+		pattern_index = (pattern_index + 1) % rhythm_pattern.length()
 
-		# Sécurité: ne pas dépasser le prochain accord
+		# Sécurité: ne pas dépasser la fin de l'accord
 		if current_time >= end_time:
 			break
 
@@ -175,19 +184,22 @@ func _generate_strum(chord: GuitarChord, time: float, direction: String, base_ve
 		is_muted: Si true, génère des notes très courtes
 	"""
 
-	# Calculer la durée du strum
-	var strum_duration = _calculate_strum_duration(chord)
+	var chord_notes = chord.get_notes()
+	var num_chord_notes = chord_notes.size()
 
-	# Déterminer l'ordre des cordes
+	# Calculer la durée du strum
+	var strum_duration = _calculate_strum_duration()
+
+	# Déterminer l'ordre des cordes (adaptation automatique à 4, 5, ou 6 notes)
 	var string_order = []
 	if direction == "down":
 		# Graves vers aiguës (0 -> n)
-		for i in range(chord.notes.size()):
+		for i in range(num_chord_notes):
 			if not chord.is_string_muted(i):
 				string_order.append(i)
 	else:  # "up"
 		# Aiguës vers graves (n -> 0)
-		for i in range(chord.notes.size() - 1, -1, -1):
+		for i in range(num_chord_notes - 1, -1, -1):
 			if not chord.is_string_muted(i):
 				string_order.append(i)
 
@@ -211,7 +223,7 @@ func _generate_strum(chord: GuitarChord, time: float, direction: String, base_ve
 
 	for i in range(string_order.size()):
 		var string_index = string_order[i]
-		var pitch = chord.notes[string_index]
+		var pitch = chord_notes[string_index]
 
 		# Calculer le timing de cette corde
 		var note_time = time + (i * delay_per_string)
@@ -225,7 +237,7 @@ func _generate_strum(chord: GuitarChord, time: float, direction: String, base_ve
 		var velocity = _calculate_velocity(i, num_strings, base_velocity, accent_factor)
 
 		# Calculer la durée de la note
-		var duration = chord.step_length + config.note_overlap
+		var duration = step_beat_length + config.note_overlap
 		if is_muted:
 			duration = config.mute_duration
 
@@ -249,15 +261,10 @@ func _generate_strum(chord: GuitarChord, time: float, direction: String, base_ve
 # CALCULS DE RÉALISME
 # ============================================================================
 
-func _calculate_strum_duration(chord: GuitarChord) -> float:
+func _calculate_strum_duration() -> float:
 	"""Calcule une durée de strum aléatoire."""
 	var min_dur = config.strum_duration_min
 	var max_dur = config.strum_duration_max
-
-	# Override si spécifié dans l'accord
-	if chord.override_strum_duration > 0:
-		return chord.override_strum_duration
-
 	return rng.randf_range(min_dur, max_dur)
 
 
@@ -338,9 +345,9 @@ func _prolong_active_notes(duration: float) -> void:
 # UTILITAIRES
 # ============================================================================
 
-func _sort_by_position(a: GuitarChord, b: GuitarChord) -> bool:
-	"""Trie les accords par position croissante."""
-	return a.position < b.position
+func _sort_by_time(a: GuitarChord, b: GuitarChord) -> bool:
+	"""Trie les accords par time croissante."""
+	return a.time < b.time
 
 
 func _sort_notes_by_position(a: Dictionary, b: Dictionary) -> bool:
