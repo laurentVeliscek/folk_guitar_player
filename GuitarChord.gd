@@ -2,50 +2,45 @@ extends Reference
 class_name GuitarChord
 
 """
-Represents a guitar chord with its timing, notes, and strumming pattern.
+Represents a guitar chord with its timing and notes.
+The interpretation (rhythm pattern) is handled by FolkGuitarPlayer.
 
 Usage:
 	var chord = GuitarChord.new()
-	chord.position = 0.0
-	chord.notes = [40, 45, 50, 55, 59, 64]  # E minor
-	chord.pattern = "D.uDudu"
-	chord.step_length = 0.5
+	chord.time = 0.0
+	chord.beat_length = 4.0  # Duration of the chord (whole note)
+	chord.notes = [40, 45, 50, 55, 59, 64]  # E minor (6 notes)
+	# or
+	chord.midiNotes = PoolIntArray([64, 67, 71, 76])  # 4-note chord
 """
 
-# Position temporelle en beats
-var position: float = 0.0
+# Position temporelle en beats (start time of the chord)
+var time: float = 0.0
 
-# Tableau des pitchs MIDI (6 cordes max, de grave à aiguë)
-# Exemple: [40, 45, 50, 55, 59, 64] pour Em
+# Durée de l'accord en beats (how long this chord lasts)
+var beat_length: float = 4.0
+
+# Tableau des pitchs MIDI (de grave à aiguë)
+# Can be 4, 5, or 6 notes
 var notes: Array = []
 
-# Pattern rythmique à boucler
-# D = Down fort, d = down léger, U = Up fort, u = up léger
-# ' ' = silence, '.' = laisser sonner, 'X' = muté
-var pattern: String = "Dudu"
-
-# Durée d'un pas de pattern en beats
-# 0.5 = croche (défaut), 0.25 = double-croche
-var step_length: float = 0.5
+# Alternative: PoolIntArray pour compatibilité avec ton code existant
+var midiNotes: PoolIntArray = PoolIntArray()
 
 # Cordes mutées (true = mutée, false = jouée)
 # Si vide, toutes les cordes sont jouées
 var muted_strings: Array = []
 
-# Paramètres optionnels pour surcharger les réglages globaux
-var override_velocity_base: float = -1.0  # -1 = utiliser global
-var override_strum_duration: float = -1.0  # -1 = utiliser global
 
-
-func _init(pos: float = 0.0, chord_notes: Array = [], chord_pattern: String = "Dudu", step: float = 0.5):
-	position = pos
+func _init(chord_time: float = 0.0, chord_notes: Array = [], chord_beat_length: float = 4.0):
+	time = chord_time
 	notes = chord_notes
-	pattern = chord_pattern
-	step_length = step
+	beat_length = chord_beat_length
 
 
 func _to_string() -> String:
-	return "GuitarChord(pos=%s, notes=%s, pattern='%s', step=%s)" % [position, notes, pattern, step_length]
+	var note_array = notes if not notes.empty() else Array(midiNotes)
+	return "GuitarChord(time=%s, beat_length=%s, notes=%s)" % [time, beat_length, note_array]
 
 
 # Vérifie si une corde est mutée
@@ -59,11 +54,23 @@ func is_string_muted(string_index: int) -> bool:
 
 # Retourne le nombre de cordes actives (non mutées)
 func get_active_string_count() -> int:
+	var note_count = notes.size() if not notes.empty() else midiNotes.size()
+
 	if muted_strings.empty():
-		return notes.size()
+		return note_count
 
 	var count = 0
-	for i in range(notes.size()):
+	for i in range(note_count):
 		if not is_string_muted(i):
 			count += 1
 	return count
+
+
+# Retourne les notes en Array (gère à la fois notes et midiNotes)
+func get_notes() -> Array:
+	if not notes.empty():
+		return notes
+	elif not midiNotes.empty():
+		return Array(midiNotes)
+	else:
+		return []
