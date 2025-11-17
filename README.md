@@ -9,6 +9,7 @@ Génère des séquences MIDI humanisées à partir d'une grille d'accords et de 
 ## 🎯 Caractéristiques
 
 - **Balayette réaliste** : Simulation du mouvement de la main avec égrènement des cordes
+- **Position du médiateur** : Volume variable selon le placement de la main (graves/aiguës)
 - **Humanisation** : Variations aléatoires de vélocité et timing pour éviter l'effet "machine"
 - **Patterns rythmiques flexibles** : Down/Up fort/léger, mutées, laisser sonner, silences
 - **Double-croches et croches** : Support des rythmiques funk et folk classiques
@@ -167,6 +168,10 @@ player.set_configuration({
     "velocity_randomization": 0.10,  # Variation aléatoire (0-1)
     "velocity_curve_shape": "gaussian",  # gaussian, linear, flat
 
+    # === POSITION DU MÉDIATEUR ===
+    "pick_position": 0.0,         # Position: -1.0 (graves) à 1.0 (aiguës)
+    "pick_position_influence": 0.5,  # Intensité de l'effet (0.0-1.0)
+
     # === ACCENTS ===
     "accent_downbeat_factor": 1.15,  # Multiplicateur temps forts
 
@@ -219,6 +224,56 @@ player.set_configuration({
     "timing_variance": 0.003,
 })
 ```
+
+#### Position du Médiateur (Pick Position)
+
+La position du médiateur simule l'endroit où le guitariste place sa main pour gratter les cordes. Cela influence le volume relatif des cordes graves et aiguës, comme un vrai guitariste.
+
+**Paramètres** :
+- `pick_position` : Position du médiateur (-1.0 à 1.0)
+  - `-1.0` : Médiateur proche des **cordes graves** → graves plus fortes, aiguës plus faibles
+  - `0.0` : Position **neutre** (défaut) → toutes les cordes équilibrées
+  - `1.0` : Médiateur proche des **cordes aiguës** → aiguës plus fortes, graves plus faibles
+- `pick_position_influence` : Intensité de l'effet (0.0 à 1.0)
+  - `0.0` : Aucun effet (toutes les cordes au même volume)
+  - `1.0` : Effet maximum (différence marquée entre graves et aiguës)
+  - `0.5` : Effet modéré (défaut, réaliste)
+
+**Impact de la direction du strum** :
+- **Down** (grave → aigu) : Favorise légèrement les cordes graves
+- **Up** (aigu → grave) : Favorise légèrement les cordes aiguës
+
+**Exemples d'utilisation** :
+
+```gdscript
+# Style "Bassiste" - Mettre l'accent sur les basses
+player.set_configuration({
+    "pick_position": -0.7,           # Vers les graves
+    "pick_position_influence": 0.8,  # Effet marqué
+})
+
+# Style "Lead" - Mettre l'accent sur les aiguës
+player.set_configuration({
+    "pick_position": 0.8,            # Vers les aiguës
+    "pick_position_influence": 0.7,
+})
+
+# Jeu équilibré (défaut)
+player.set_configuration({
+    "pick_position": 0.0,            # Neutre
+    "pick_position_influence": 0.5,  # Effet modéré
+})
+
+# Désactiver complètement l'effet
+player.set_configuration({
+    "pick_position_influence": 0.0,  # Pas d'effet de position
+})
+```
+
+**Notes** :
+- L'effet est subtil et réaliste : les cordes éloignées du médiateur ne sont jamais complètement coupées
+- Combine naturellement avec `velocity_curve_shape` pour un réalisme accru
+- Parfait pour varier le son entre couplets (graves) et refrains (aiguës)
 
 ---
 
@@ -323,7 +378,7 @@ for note in notes:
 
 ### Exécuter la Démo
 
-Le fichier `Demo.gd` contient 6 tests complets :
+Le fichier `Demo.gd` contient 7 tests complets :
 
 1. **Pattern Simple** : Test basique d'un pattern sur un accord
 2. **Progression d'Accords** : Enchaînement Em-C-G-D
@@ -331,6 +386,7 @@ Le fichier `Demo.gd` contient 6 tests complets :
 4. **Laisser Sonner** : Test du symbole `.`
 5. **Rythmique Funk** : Double-croches
 6. **Configuration Personnalisée** : Jeu agressif avec humanisation
+7. **Position du Médiateur** : Test des effets de `pick_position` sur les volumes des cordes
 
 Pour exécuter :
 ```gdscript

@@ -25,6 +25,8 @@ var config = {
 	"velocity_up_base": 95,  # Vélocité de base pour Up fort
 	"velocity_up_light": 70,  # Vélocité de base pour up léger
 	"note_overlap": 0.02,  # Léger overlap pour éviter les trous (en beats)
+	"pick_position": 0.0,  # Position du médiateur: -1.0 (graves) à 1.0 (aiguës), 0.0 = neutre
+	"pick_position_influence": 0.5,  # Intensité de l'effet (0.0 = aucun, 1.0 = maximum)
 }
 
 # Grille d'accords
@@ -209,6 +211,9 @@ func _generate_strum(chord: GuitarChord, time: float, direction: String, base_ve
 	# Générer chaque note du strum
 	active_notes.clear()  # Réinitialiser les notes actives
 
+	# Nombre total de cordes de la guitare (pour le calcul de position du médiateur)
+	var total_guitar_strings = chord.notes.size()
+
 	for i in range(string_order.size()):
 		var string_index = string_order[i]
 		var pitch = chord.notes[string_index]
@@ -222,7 +227,7 @@ func _generate_strum(chord: GuitarChord, time: float, direction: String, base_ve
 			note_time += timing_offset
 
 		# Calculer la vélocité pour cette corde
-		var velocity = _calculate_velocity(i, num_strings, base_velocity, accent_factor)
+		var velocity = _calculate_velocity(i, num_strings, base_velocity, accent_factor, string_index, total_guitar_strings, direction)
 
 		# Calculer la durée de la note
 		var duration = chord.step_length + config.note_overlap
@@ -261,7 +266,7 @@ func _calculate_strum_duration(chord: GuitarChord) -> float:
 	return rng.randf_range(min_dur, max_dur)
 
 
-func _calculate_velocity(string_pos: int, total_strings: int, base_velocity: float, accent_factor: float) -> float:
+func _calculate_velocity(string_pos: int, total_strings: int, base_velocity: float, accent_factor: float, string_index: int, total_guitar_strings: int, direction: String) -> float:
 	"""
 	Calcule la vélocité d'une corde selon sa position dans le strum.
 
@@ -270,6 +275,9 @@ func _calculate_velocity(string_pos: int, total_strings: int, base_velocity: flo
 		total_strings: Nombre total de cordes jouées
 		base_velocity: Vélocité de base
 		accent_factor: Facteur d'accent (temps forts)
+		string_index: Index de la corde sur la guitare (0 = grave, n = aigu)
+		total_guitar_strings: Nombre total de cordes de la guitare
+		direction: Direction du strum ("down" ou "up")
 	"""
 
 	var velocity = base_velocity
@@ -283,6 +291,10 @@ func _calculate_velocity(string_pos: int, total_strings: int, base_velocity: flo
 
 	# Appliquer l'accent
 	velocity *= accent_factor
+
+	# Appliquer le facteur de position du médiateur
+	var pick_factor = _calculate_pick_position_factor(string_index, total_guitar_strings, direction)
+	velocity *= pick_factor
 
 	# Appliquer la randomisation
 	if config.velocity_randomization > 0:
@@ -326,6 +338,70 @@ func _linear_curve(pos: int, total: int) -> float:
 		return 0.8 + (normalized_pos * 0.8)  # 0.8 -> 1.2
 	else:
 		return 1.6 - (normalized_pos * 0.8)  # 1.2 -> 0.8
+
+
+func _calculate_pick_position_factor(string_index: int, total_guitar_strings: int, direction: String) -> float:
+	"""
+	Calcule un facteur de vélocité basé sur la position du médiateur.
+
+	Le guitariste place son médiateur plus près des cordes graves ou aiguës,
+	ce qui influence le volume relatif des différentes cordes.
+
+	Args:
+		string_index: Index de la corde (0 = grave, n = aigu)
+		total_guitar_strings: Nombre total de cordes de la guitare
+		direction: Direction du strum ("down" ou "up")
+
+	Returns:
+		Facteur multiplicateur de vélocité (0.4 à 1.3)
+	"""
+
+	# Si l'influence est désactivée, retourner 1.0 (aucun effet)
+	if config.pick_position_influence <= 0.0:
+		return 1.0
+
+	# Normaliser la position de la corde (0.0 = grave, 1.0 = aigu)
+	var normalized_string_pos = 0.5  # Valeur par défaut
+	if total_guitar_strings > 1:
+		normalized_string_pos = float(string_index) / float(total_guitar_strings - 1)
+
+	# La direction influence légèrement la position effective du médiateur
+	# Down : favorise légèrement les graves (le médiateur "pousse" vers les aiguës)
+	# Up : favorise légèrement les aiguës (le médiateur "tire" vers les graves)
+	var direction_bias = 0.0
+	if direction == "down":
+		direction_bias = -0.12  # Décalage vers les graves
+	else:  # "up"
+		direction_bias = 0.12   # Décalage vers les aiguës
+
+	# Position effective du médiateur (combinaison de pick_position et direction)
+	var effective_pick_pos = clamp(config.pick_position + direction_bias, -1.0, 1.0)
+
+	# Convertir effective_pick_pos de [-1.0, 1.0] vers [0.0, 1.0]
+	# -1.0 (graves) → 0.0
+	#  0.0 (neutre) → 0.5
+	#  1.0 (aiguës) → 1.0
+	var pick_pos_normalized = (effective_pick_pos + 1.0) / 2.0
+
+	# Calculer la distance entre le médiateur et la corde
+	var distance = abs(pick_pos_normalized - normalized_string_pos)
+
+	# Appliquer une courbe pour convertir la distance en facteur de volume
+	# Distance 0.0 (corde = position médiateur) → facteur maximum (1.3)
+	# Distance 1.0 (corde opposée au médiateur) → facteur minimum (0.4)
+	# Utiliser une courbe exponentielle douce pour un effet naturel
+	var base_factor = 1.0 - (distance * 0.6)  # Range: 1.0 à 0.4
+	base_factor = pow(base_factor, 0.7)  # Adoucir la courbe
+
+	# Mapper le facteur entre 0.4 et 1.3
+	var factor = 0.4 + (base_factor * 0.9)
+
+	# Appliquer l'intensité de l'effet
+	# Si influence = 0.0 → facteur = 1.0 (neutre)
+	# Si influence = 1.0 → facteur = factor calculé
+	var final_factor = 1.0 + ((factor - 1.0) * config.pick_position_influence)
+
+	return final_factor
 
 
 func _prolong_active_notes(duration: float) -> void:
