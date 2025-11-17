@@ -17,6 +17,7 @@ func _ready():
 	test_pattern_with_sustain()
 	test_funk_rhythm()
 	test_custom_configuration()
+	test_pick_position()
 
 	print("\n" + "="*60)
 	print("     DEMO TERMINÉE")
@@ -245,6 +246,98 @@ func test_custom_configuration():
 			var expected = a.position + (i * player.config.strum_duration_min)
 			var deviation = abs(n.position - expected)
 			print("  Note %d: position=%.5f (déviation: %.5f)" % [i, n.position, deviation])
+
+
+# ============================================================================
+# TEST 7: Position du médiateur (pick_position)
+# ============================================================================
+func test_pick_position():
+	print("\n--- TEST 7: Position du Médiateur (Pick Position) ---")
+
+	# Créer un accord de test (Em)
+	var em = GuitarChord.new()
+	em.position = 0.0
+	em.notes = [40, 47, 52, 56, 59, 64]  # E2 B2 E3 G3 B3 E4 (grave -> aigu)
+	em.pattern = "D"  # Un seul strum down pour simplifier
+	em.step_length = 1.0
+
+	# TEST A: Position vers les graves (-1.0)
+	print("\n  A) Pick position = -1.0 (GRAVES favorisées)")
+	var player_bass = FolkGuitarPlayer.new()
+	player_bass.set_configuration({
+		"pick_position": -1.0,
+		"pick_position_influence": 0.8,
+		"velocity_randomization": 0.0,  # Désactiver random pour voir l'effet pur
+		"velocity_curve_shape": "flat"  # Courbe plate pour isoler l'effet
+	})
+	player_bass.set_chord_grid([em])
+	var notes_bass = player_bass.generate()
+
+	print("    Corde 0 (E grave): vel=%d" % notes_bass[0].velocity)
+	print("    Corde 3 (G):       vel=%d" % notes_bass[3].velocity)
+	print("    Corde 5 (E aigu):  vel=%d" % notes_bass[5].velocity)
+	print("    => Les graves devraient être plus fortes")
+
+	# TEST B: Position neutre (0.0)
+	print("\n  B) Pick position = 0.0 (NEUTRE)")
+	var player_neutral = FolkGuitarPlayer.new()
+	player_neutral.set_configuration({
+		"pick_position": 0.0,
+		"pick_position_influence": 0.8,
+		"velocity_randomization": 0.0,
+		"velocity_curve_shape": "flat"
+	})
+	player_neutral.set_chord_grid([em.duplicate()])
+	var notes_neutral = player_neutral.generate()
+
+	print("    Corde 0 (E grave): vel=%d" % notes_neutral[0].velocity)
+	print("    Corde 3 (G):       vel=%d" % notes_neutral[3].velocity)
+	print("    Corde 5 (E aigu):  vel=%d" % notes_neutral[5].velocity)
+	print("    => Toutes les cordes devraient être proches")
+
+	# TEST C: Position vers les aiguës (1.0)
+	print("\n  C) Pick position = 1.0 (AIGUËS favorisées)")
+	var player_treble = FolkGuitarPlayer.new()
+	player_treble.set_configuration({
+		"pick_position": 1.0,
+		"pick_position_influence": 0.8,
+		"velocity_randomization": 0.0,
+		"velocity_curve_shape": "flat"
+	})
+	player_treble.set_chord_grid([em.duplicate()])
+	var notes_treble = player_treble.generate()
+
+	print("    Corde 0 (E grave): vel=%d" % notes_treble[0].velocity)
+	print("    Corde 3 (G):       vel=%d" % notes_treble[3].velocity)
+	print("    Corde 5 (E aigu):  vel=%d" % notes_treble[5].velocity)
+	print("    => Les aiguës devraient être plus fortes")
+
+	# TEST D: Effet de la direction (Down vs Up)
+	print("\n  D) Effet de la direction du strum")
+	var em_up = em.duplicate()
+	em_up.pattern = "U"  # Strum up
+
+	var player_dir = FolkGuitarPlayer.new()
+	player_dir.set_configuration({
+		"pick_position": 0.0,  # Position neutre pour voir l'effet de la direction seule
+		"pick_position_influence": 0.8,
+		"velocity_randomization": 0.0,
+		"velocity_curve_shape": "flat"
+	})
+
+	print("    Down strum:")
+	player_dir.set_chord_grid([em])
+	var notes_down = player_dir.generate()
+	print("      Corde 0 (grave): vel=%d" % notes_down[0].velocity)
+	print("      Corde 5 (aigu):  vel=%d" % notes_down[5].velocity)
+
+	print("    Up strum:")
+	player_dir.set_chord_grid([em_up])
+	var notes_up = player_dir.generate()
+	# Avec Up, l'ordre est inversé (aiguë vers grave)
+	print("      Corde 5 (aigu):  vel=%d" % notes_up[0].velocity)
+	print("      Corde 0 (grave): vel=%d" % notes_up[5].velocity)
+	print("    => Down favorise graves, Up favorise aiguës")
 
 
 # ============================================================================
