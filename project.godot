@@ -1,0 +1,19 @@
+; Engine configuration file.
+; It's best edited using the editor UI and not directly,
+; but this file is compatible with Godot 3.6
+
+config_version=4
+
+[application]
+
+config/name="Folk Guitar Player"
+config/description="Realistic MIDI guitar strum simulation"
+run/main_scene="res://Demo.tscn"
+
+[physics]
+
+common/enable_pause_aware_picking=true
+
+[rendering]
+
+environment/default_environment="res://default_env.tres"
