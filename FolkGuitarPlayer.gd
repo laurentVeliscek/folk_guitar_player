@@ -4,15 +4,31 @@ class_name FolkGuitarPlayer
 """
 Simulates realistic folk guitar strumming patterns with humanized MIDI output.
 
-The player interprets a chord grid by applying a rhythm pattern that loops
-throughout the entire grid. It adapts to chords of different sizes (4, 5, or 6 notes).
+The player interprets a chord grid by applying a sequence of 16-step patterns.
+It adapts to chords of different sizes (4, 5, or 6 notes).
+
+The duration of the generated output is the maximum of:
+- Total duration of all chords in chord_grid
+- Total duration of all patterns in pattern_sequence
+
+Both chord_grid and pattern_sequence loop as needed to fill the full duration.
 
 Usage:
 	var player = FolkGuitarPlayer.new()
-	player.rhythm_pattern = "DuDuD Du"  # Pattern to loop
-	player.step_beat_length = 0.5       # Each step is an eighth note
+
+	# Create patterns (each is exactly 16 steps)
+	var pattern1 = StrumPattern.create("D.uDudu D.uDudu ", 0.25)
+	var pattern2 = StrumPattern.create("D...d...D...d...", 0.25, [{"velocity_down_base": 90}])
+	player.pattern_sequence = [pattern1, pattern2]
+
 	player.set_chord_grid(chords_array) # Array of GuitarChord objects
 	var midi_notes = player.generate()  # Returns MIDI note events
+
+Pattern symbols:
+	D = Down fort, d = down léger, U = Up fort, u = up léger
+	X = Muté fort, x = muté léger
+	F = Flam DU (rapide, fort), f = flam du (rapide, léger)
+	' ' = silence, '.' = laisser sonner
 """
 
 # Configuration globale - Paramètres de réalisme
@@ -37,19 +53,21 @@ var config = {
 # Grille d'accords
 var chord_grid: Array = []
 
-# Rhythm pattern to loop (defined at player level, not chord level)
-# D = Down fort, d = down léger, U = Up fort, u = up léger
-# ' ' = silence, '.' = laisser sonner, 'X' = muté
-var rhythm_pattern: String = "Dudu"
-
-# Duration of each pattern step in beats (e.g., 0.5 for eighth notes)
-var step_beat_length: float = 0.5
+# Sequence of StrumPattern objects (each pattern is 16 steps)
+var pattern_sequence: Array = []
 
 # Notes MIDI en sortie
 var output_notes: Array = []
 
 # Notes actuellement actives (pour gérer le '.')
 var active_notes: Array = []
+
+# Tracking des dernières notes par pitch (pour éviter les chevauchements)
+# Dictionary: pitch -> note Dictionary reference
+var _last_note_by_pitch: Dictionary = {}
+
+# Configuration sauvegardée (pour restaurer après config_override)
+var _saved_config: Dictionary = {}
 
 # Random number generator
 var rng = RandomNumberGenerator.new()
@@ -82,30 +100,81 @@ func get_configuration() -> Dictionary:
 
 func generate() -> Array:
 	"""
-	Génère toutes les notes MIDI à partir de la grille d'accords.
+	Génère toutes les notes MIDI à partir de la grille d'accords et de la séquence de patterns.
+
+	La durée totale est le maximum entre:
+	- La durée totale des accords (chord_grid)
+	- La durée totale des patterns (pattern_sequence)
+
+	Les deux bouclent si nécessaire pour remplir la durée totale.
+
 	Retourne un Array de Dictionary avec: pitch, position, duration, velocity, string_index
 	"""
 	output_notes.clear()
 	active_notes.clear()
+	_last_note_by_pitch.clear()
 
 	if chord_grid.empty():
 		push_warning("FolkGuitarPlayer: Chord grid is empty")
 		return output_notes
 
-	if rhythm_pattern.empty():
-		push_warning("FolkGuitarPlayer: rhythm_pattern is empty")
+	if pattern_sequence.empty():
+		push_warning("FolkGuitarPlayer: pattern_sequence is empty")
 		return output_notes
 
-	# Trier les accords par time (au cas où)
-	var sorted_chords = chord_grid.duplicate()
-	sorted_chords.sort_custom(self, "_sort_by_time")
+	# Calculer les durées totales
+	var chords_duration = _calculate_chords_duration()
+	var patterns_duration = _calculate_patterns_duration()
+	var total_duration = max(chords_duration, patterns_duration)
 
-	# Traiter chaque accord
-	for chord in sorted_chords:
-		var start_time = chord.time
-		var end_time = chord.time + chord.beat_length
+	if total_duration <= 0:
+		push_warning("FolkGuitarPlayer: Total duration is 0")
+		return output_notes
 
-		_process_chord(chord, start_time, end_time)
+	# Générer les notes en parcourant le temps
+	var current_time = 0.0
+	var pattern_seq_index = 0
+	var pattern_step_index = 0
+
+	while current_time < total_duration:
+		# Obtenir le pattern courant (boucler si nécessaire)
+		var current_pattern = pattern_sequence[pattern_seq_index % pattern_sequence.size()]
+
+		# Appliquer config_override pour ce pattern
+		_apply_config_override(current_pattern.config_override)
+
+		# Obtenir l'accord courant à cette position temporelle (avec boucle)
+		var current_chord = _get_chord_at_time(current_time, chords_duration)
+
+		if current_chord == null:
+			# Ne devrait pas arriver, mais sécurité
+			current_time += current_pattern.step_beat_length
+			pattern_step_index += 1
+			if pattern_step_index >= 16:
+				pattern_step_index = 0
+				pattern_seq_index += 1
+				_restore_config()
+			continue
+
+		# Obtenir le symbole du pattern
+		var symbol = current_pattern.pattern[pattern_step_index]
+		var step_length = current_pattern.step_beat_length
+
+		# Traiter le symbole
+		_process_symbol(symbol, current_chord, current_time, step_length, pattern_step_index)
+
+		# Avancer dans le temps
+		current_time += step_length
+		pattern_step_index += 1
+
+		# Passer au pattern suivant si on a fini les 16 pas
+		if pattern_step_index >= 16:
+			pattern_step_index = 0
+			pattern_seq_index += 1
+			_restore_config()
+
+	# Restaurer la config au cas où
+	_restore_config()
 
 	# Trier les notes par position
 	output_notes.sort_custom(self, "_sort_notes_by_position")
@@ -113,67 +182,109 @@ func generate() -> Array:
 	return output_notes
 
 
+func _calculate_chords_duration() -> float:
+	"""Calcule la durée totale de tous les accords."""
+	if chord_grid.empty():
+		return 0.0
+
+	var max_end = 0.0
+	for chord in chord_grid:
+		var end = chord.time + chord.beat_length
+		if end > max_end:
+			max_end = end
+	return max_end
+
+
+func _calculate_patterns_duration() -> float:
+	"""Calcule la durée totale de tous les patterns."""
+	var total = 0.0
+	for pattern in pattern_sequence:
+		total += pattern.get_duration()
+	return total
+
+
+func _get_chord_at_time(time: float, chords_duration: float) -> GuitarChord:
+	"""Retourne l'accord actif à un temps donné, avec boucle sur chord_grid."""
+	if chord_grid.empty():
+		return null
+
+	# Appliquer la boucle sur le temps
+	var looped_time = fmod(time, chords_duration) if chords_duration > 0 else time
+
+	# Trouver l'accord qui contient ce temps
+	for chord in chord_grid:
+		if looped_time >= chord.time and looped_time < chord.time + chord.beat_length:
+			return chord
+
+	# Fallback: retourner le dernier accord
+	return chord_grid[chord_grid.size() - 1]
+
+
+func _apply_config_override(overrides: Array) -> void:
+	"""Applique les overrides de configuration et sauvegarde les valeurs originales."""
+	if overrides.empty():
+		return
+
+	_saved_config.clear()
+	for override in overrides:
+		if override is Dictionary:
+			for key in override:
+				if config.has(key):
+					_saved_config[key] = config[key]
+					config[key] = override[key]
+
+
+func _restore_config() -> void:
+	"""Restaure la configuration originale après un pattern."""
+	for key in _saved_config:
+		config[key] = _saved_config[key]
+	_saved_config.clear()
+
+
+func _process_symbol(symbol: String, chord: GuitarChord, time: float, step_length: float, step_index: int) -> void:
+	"""Traite un symbole du pattern et génère les notes appropriées."""
+	var beat_position = time
+
+	match symbol:
+		'D':  # Down fort
+			_generate_strum(chord, time, "down", config.velocity_down_base, beat_position, false, step_length)
+		'd':  # Down léger
+			_generate_strum(chord, time, "down", config.velocity_down_light, beat_position, false, step_length)
+		'U':  # Up fort
+			_generate_strum(chord, time, "up", config.velocity_up_base, beat_position, false, step_length)
+		'u':  # Up léger
+			_generate_strum(chord, time, "up", config.velocity_up_light, beat_position, false, step_length)
+		'X':  # Muté fort
+			_generate_strum(chord, time, "down", config.velocity_down_base, beat_position, true, step_length)
+		'x':  # Muté léger (plus court et plus doux)
+			_generate_strum(chord, time, "down", config.velocity_down_light * 0.8, beat_position, true, step_length, true)
+		'F':  # Flam DU fort (Down-Up rapide legato)
+			_generate_flam(chord, time, step_length, true)
+		'f':  # Flam du léger (down-up rapide legato)
+			_generate_flam(chord, time, step_length, false)
+		'.':  # Laisser sonner
+			_prolong_active_notes(step_length)
+		' ':  # Silence
+			pass
+		_:
+			push_warning("FolkGuitarPlayer: Unknown pattern symbol '%s' at time %s" % [symbol, time])
+
+
 func clear() -> void:
 	"""Réinitialise le player."""
 	chord_grid.clear()
+	pattern_sequence.clear()
 	output_notes.clear()
 	active_notes.clear()
-
-
-# ============================================================================
-# TRAITEMENT DES ACCORDS
-# ============================================================================
-
-func _process_chord(chord: GuitarChord, start_time: float, end_time: float) -> void:
-	"""Traite un accord et génère toutes ses notes selon le pattern du player."""
-
-	var chord_notes = chord.get_notes()
-	if chord_notes.empty():
-		push_warning("FolkGuitarPlayer: Chord has no notes at time %s" % start_time)
-		return
-
-	var current_time = start_time
-	var pattern_index = 0
-	var beat_position = start_time  # Position en beats depuis le début du morceau (pour accents)
-
-	# Boucler sur le rhythm_pattern du player jusqu'à la fin de l'accord
-	while current_time < end_time:
-		var symbol = rhythm_pattern[pattern_index]
-
-		# Traiter le symbole
-		match symbol:
-			'D':  # Down fort
-				_generate_strum(chord, current_time, "down", config.velocity_down_base, beat_position, false)
-			'd':  # Down léger
-				_generate_strum(chord, current_time, "down", config.velocity_down_light, beat_position, false)
-			'U':  # Up fort
-				_generate_strum(chord, current_time, "up", config.velocity_up_base, beat_position, false)
-			'u':  # Up léger
-				_generate_strum(chord, current_time, "up", config.velocity_up_light, beat_position, false)
-			'X':  # Muté
-				_generate_strum(chord, current_time, "down", config.velocity_down_base, beat_position, true)
-			'.':  # Laisser sonner
-				_prolong_active_notes(step_beat_length)
-			' ':  # Silence (ne rien faire, les notes s'arrêteront naturellement)
-				pass
-			_:
-				push_warning("FolkGuitarPlayer: Unknown pattern symbol '%s' at position %s" % [symbol, current_time])
-
-		# Avancer dans le temps
-		current_time += step_beat_length
-		beat_position += step_beat_length
-		pattern_index = (pattern_index + 1) % rhythm_pattern.length()
-
-		# Sécurité: ne pas dépasser la fin de l'accord
-		if current_time >= end_time:
-			break
+	_last_note_by_pitch.clear()
+	_saved_config.clear()
 
 
 # ============================================================================
 # GÉNÉRATION DE STRUM
 # ============================================================================
 
-func _generate_strum(chord: GuitarChord, time: float, direction: String, base_velocity: float, beat_pos: float, is_muted: bool) -> void:
+func _generate_strum(chord: GuitarChord, time: float, direction: String, base_velocity: float, beat_pos: float, is_muted: bool, step_length: float, is_light_mute: bool = false) -> void:
 	"""
 	Génère un strum complet (balayette) avec toutes les cordes.
 
@@ -184,6 +295,8 @@ func _generate_strum(chord: GuitarChord, time: float, direction: String, base_ve
 		base_velocity: Vélocité de base
 		beat_pos: Position en beats (pour déterminer les accents)
 		is_muted: Si true, génère des notes très courtes
+		step_length: Durée du pas (en beats)
+		is_light_mute: Si true, muté encore plus court (pour 'x')
 	"""
 
 	var chord_notes = chord.get_notes()
@@ -242,9 +355,15 @@ func _generate_strum(chord: GuitarChord, time: float, direction: String, base_ve
 		var velocity = _calculate_velocity(i, num_strings, base_velocity, accent_factor, string_index, total_guitar_strings, direction)
 
 		# Calculer la durée de la note
-		var duration = step_beat_length + config.note_overlap
+		var duration = step_length + config.note_overlap
 		if is_muted:
-			duration = config.mute_duration
+			if is_light_mute:
+				duration = config.mute_duration * 0.5  # Encore plus court pour 'x'
+			else:
+				duration = config.mute_duration
+
+		# Gérer le chevauchement des notes de même pitch
+		_handle_pitch_overlap(pitch, note_time)
 
 		# Créer la note
 		var note = {
@@ -257,9 +376,62 @@ func _generate_strum(chord: GuitarChord, time: float, direction: String, base_ve
 
 		output_notes.append(note)
 
+		# Tracker cette note pour les futurs chevauchements
+		_last_note_by_pitch[pitch] = note
+
 		# Sauvegarder pour gérer le '.'
 		if not is_muted:
 			active_notes.append(note)
+
+
+func _generate_flam(chord: GuitarChord, time: float, step_length: float, is_strong: bool) -> void:
+	"""
+	Génère un flam (Down-Up rapide) dans un seul step.
+
+	Le flam est composé de deux strums:
+	- Down au début du step
+	- Up à la moitié du step
+	Les deux sont legato (pas de silence entre eux).
+
+	Args:
+		chord: L'accord à jouer
+		time: Position temporelle du flam
+		step_length: Durée totale du step
+		is_strong: Si true, utilise les vélocités fortes (F), sinon légères (f)
+	"""
+	var half_step = step_length / 2.0
+
+	if is_strong:
+		# F = DU fort
+		_generate_strum(chord, time, "down", config.velocity_down_base, time, false, half_step)
+		_generate_strum(chord, time + half_step, "up", config.velocity_up_base, time + half_step, false, half_step)
+	else:
+		# f = du léger
+		_generate_strum(chord, time, "down", config.velocity_down_light, time, false, half_step)
+		_generate_strum(chord, time + half_step, "up", config.velocity_up_light, time + half_step, false, half_step)
+
+
+func _handle_pitch_overlap(pitch: int, new_note_time: float) -> void:
+	"""
+	Gère le chevauchement des notes de même pitch.
+	Tronque la note précédente si elle chevaucherait la nouvelle.
+	"""
+	if not _last_note_by_pitch.has(pitch):
+		return
+
+	var prev_note = _last_note_by_pitch[pitch]
+	var prev_end = prev_note.position + prev_note.duration
+
+	# Si la note précédente chevauche la nouvelle, la tronquer
+	if prev_end > new_note_time:
+		# Laisser un petit gap pour éviter les artefacts MIDI
+		var gap = 0.001  # 1ms
+		var new_duration = new_note_time - prev_note.position - gap
+		if new_duration > 0:
+			prev_note.duration = new_duration
+		else:
+			# La note est trop courte, la supprimer ou la garder minimale
+			prev_note.duration = 0.001
 
 
 # ============================================================================
