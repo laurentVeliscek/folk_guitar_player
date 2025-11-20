@@ -114,7 +114,7 @@ static func from_tombatossals_position(chord_name: String, pos: Dictionary):
 # --- Utilitaires
 func is_valid() -> bool:
 	return frets.size() == 6 and fingers.size() == 6
-
+	
 # "x02210" si toutes <10 ; sinon "x 10 12 12 10 10"
 func tab_string_compact() -> String:
 	if not is_valid():
@@ -383,4 +383,44 @@ func get_ascii_tab() -> String:
 
 
 func is_string_muted(i):
-	return (frets[i] == -1)
+	return false
+	#return (frets[i] == -1)
+
+
+# retourne 2 notes de basse [b1,b2] b1 est la fondamentale (en principe)
+# si accord de 4 notes on renvoie [b1,b1]
+func get_bass_notes()->Array:
+	var notes = []
+	var root = root_pitch_class()
+	var chord_notes = []
+	for m in midiNotes():
+		chord_notes.append(m)
+	
+	if chord_notes.size() < 5:
+		var b1 = chord_notes[0]
+		return [b1,b1]
+	else :
+		var b1 = chord_notes[0]
+		var b2 = chord_notes[1]
+		if b1 % 12  == root % 12:
+			return [b1,b2]
+		else :
+			return [b2,b1]
+
+func get_arp_note(idx:int)-> int:
+	var notes = midiNotes()
+	match idx:
+			4: return notes[-1]
+			3: return notes[-2]
+			2: return notes[-3]
+			1: return notes[-4]
+			0: 
+				if notes.size() > 4:
+					return notes[-5]
+				else:
+					return notes[-4]
+			_:
+				return notes[-1 * notes.size()]
+		
+		
+
