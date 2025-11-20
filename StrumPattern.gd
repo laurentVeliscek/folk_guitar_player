@@ -6,29 +6,29 @@ Represents a 16-step strumming pattern with its own timing and configuration.
 
 Pattern symbols:
   Strums:
-    D = Down fort (strong downstroke)
-    d = Down léger (light downstroke)
-    U = Up fort (strong upstroke)
-    u = Up léger (light upstroke)
+	D = Down fort (strong downstroke)
+	d = Down léger (light downstroke)
+	U = Up fort (strong upstroke)
+	u = Up léger (light upstroke)
 
   Mutes:
-    X = Muté fort (strong muted strum)
-    x = Muté léger (light muted strum, shorter and softer)
-    W = Double mute fort (two fast muted strums: down+up, strong)
-    w = Double mute léger (two fast muted strums: down+up, light)
+	X = Muté fort (strong muted strum)
+	x = Muté léger (light muted strum, shorter and softer)
+	W = Double mute fort (two fast muted strums: down+up, strong)
+	w = Double mute léger (two fast muted strums: down+up, light)
 
   Flams:
-    F = Flam DU (rapid Down-Up, strong, legato)
-    f = Flam du (rapid down-up, light, legato)
+	F = Flam DU (rapid Down-Up, strong, legato)
+	f = Flam du (rapid down-up, light, legato)
 
   Bass & Arpeggios:
-    B = Basse principale (main bass note - lowest)
-    b = Basse alternative (alternative bass note)
-    0, 1, 2, 3, 4 = Arpeggio notes (0=lowest, 4=highest)
+	B = Basse principale (main bass note - lowest)
+	b = Basse alternative (alternative bass note)
+	0, 1, 2, 3, 4 = Arpeggio notes (0=lowest, 4=highest)
 
   Other:
-    . = Laisser sonner (let ring / sustain)
-    ' ' = Silence (space = rest)
+	. = Laisser sonner (let ring / sustain)
+	' ' = Silence (space = rest)
 
 Usage:
 	var pattern = StrumPattern.new()
@@ -43,16 +43,25 @@ Examples:
 	"D.uWu.d.X.uWu.d."  # Rhythmic with double mutes
 """
 
+
+
+
 # The 16-character pattern string
 var pattern: String = "D...d...D...d..." setget set_pattern
 
 # Duration of each step in beats
-var step_beat_length: float = 0.25
+var step_beat_length: float = 0.5
 
 # Dictionary to override FolkGuitarPlayer.config during this pattern
 # Example: {"velocity_down_base": 110, "pick_position": 0.5}
 var config_override: Dictionary = {}
 
+func clone()->StrumPattern:
+	var s:StrumPattern = get_script().new()
+	s.pattern = pattern
+	s.step_beat_length = step_beat_length
+	s.config_override = config_override.duplicate(true)
+	return s
 
 func set_pattern(value: String) -> void:
 	if value.length() != 16:
@@ -69,19 +78,3 @@ func get_duration() -> float:
 	return 16.0 * step_beat_length
 
 
-func duplicate() -> StrumPattern:
-	"""Creates a copy of this pattern."""
-	var copy = StrumPattern.new()
-	copy.pattern = pattern
-	copy.step_beat_length = step_beat_length
-	copy.config_override = config_override.duplicate(true)
-	return copy
-
-
-static func create(p_pattern: String, p_step_beat_length: float = 0.25, p_config_override: Dictionary = {}) -> StrumPattern:
-	"""Factory method to create a pattern with all parameters."""
-	var sp = StrumPattern.new()
-	sp.pattern = p_pattern
-	sp.step_beat_length = p_step_beat_length
-	sp.config_override = p_config_override
-	return sp

@@ -851,7 +851,7 @@ func print_notes(notes: Array = []) -> void:
 			note.velocity,
 			note.string_index
 		])
-	print("="  * 50)
+	print("========================================")
 
 
 func get_stats() -> Dictionary:
