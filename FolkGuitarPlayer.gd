@@ -28,6 +28,9 @@ Pattern symbols:
 	D = Down fort, d = down léger, U = Up fort, u = up léger
 	X = Muté fort, x = muté léger
 	F = Flam DU (rapide, fort), f = flam du (rapide, léger)
+	W = Double mute fort, w = double mute léger
+	B = Basse principale, b = basse alternative
+	0, 1, 2, 3, 4 = Notes d'arpège (0=grave, 4=aigu)
 	' ' = silence, '.' = laisser sonner
 """
 
@@ -48,6 +51,9 @@ var config = {
 	"note_overlap": 0.02,  # Léger overlap pour éviter les trous (en beats)
 	"pick_position": 0.0,  # Position du médiateur: -1.0 (graves) à 1.0 (aiguës), 0.0 = neutre
 	"pick_position_influence": 0.5,  # Intensité de l'effet (0.0 = aucun, 1.0 = maximum)
+	"swing_amount": 0.0,  # Swing: 0.0 = binaire pur, 1.0 = ternaire, entre = intermédiaire
+	"chord_transition_gap": 0.8,  # Facteur de raccourcissement des notes avant transition (0.8 = 80%)
+	"single_note_velocity": 90,  # Vélocité pour les notes simples (basses, arpèges)
 }
 
 # Grille d'accords
@@ -176,6 +182,9 @@ func generate() -> Array:
 	# Restaurer la config au cas où
 	_restore_config()
 
+	# Post-traitement: transitions d'accords
+	_process_chord_transitions()
+
 	# Trier les notes par position
 	output_notes.sort_custom(self, "_sort_notes_by_position")
 
@@ -245,23 +254,37 @@ func _process_symbol(symbol: String, chord: GuitarChord, time: float, step_lengt
 	"""Traite un symbole du pattern et génère les notes appropriées."""
 	var beat_position = time
 
+	# Appliquer le swing si nécessaire
+	var swung_time = _apply_swing(time, step_index, step_length)
+
 	match symbol:
 		'D':  # Down fort
-			_generate_strum(chord, time, "down", config.velocity_down_base, beat_position, false, step_length)
+			_generate_strum(chord, swung_time, "down", config.velocity_down_base, beat_position, false, step_length)
 		'd':  # Down léger
-			_generate_strum(chord, time, "down", config.velocity_down_light, beat_position, false, step_length)
+			_generate_strum(chord, swung_time, "down", config.velocity_down_light, beat_position, false, step_length)
 		'U':  # Up fort
-			_generate_strum(chord, time, "up", config.velocity_up_base, beat_position, false, step_length)
+			_generate_strum(chord, swung_time, "up", config.velocity_up_base, beat_position, false, step_length)
 		'u':  # Up léger
-			_generate_strum(chord, time, "up", config.velocity_up_light, beat_position, false, step_length)
+			_generate_strum(chord, swung_time, "up", config.velocity_up_light, beat_position, false, step_length)
 		'X':  # Muté fort
-			_generate_strum(chord, time, "down", config.velocity_down_base, beat_position, true, step_length)
+			_generate_strum(chord, swung_time, "down", config.velocity_down_base, beat_position, true, step_length)
 		'x':  # Muté léger (plus court et plus doux)
-			_generate_strum(chord, time, "down", config.velocity_down_light * 0.8, beat_position, true, step_length, true)
+			_generate_strum(chord, swung_time, "down", config.velocity_down_light * 0.8, beat_position, true, step_length, true)
 		'F':  # Flam DU fort (Down-Up rapide legato)
-			_generate_flam(chord, time, step_length, true)
+			_generate_flam(chord, swung_time, step_length, true)
 		'f':  # Flam du léger (down-up rapide legato)
-			_generate_flam(chord, time, step_length, false)
+			_generate_flam(chord, swung_time, step_length, false)
+		'W':  # Double mute fort
+			_generate_double_mute(chord, swung_time, step_length, true)
+		'w':  # Double mute léger
+			_generate_double_mute(chord, swung_time, step_length, false)
+		'B':  # Basse principale
+			_generate_bass_note(chord, swung_time, step_length, 0)
+		'b':  # Basse alternative
+			_generate_bass_note(chord, swung_time, step_length, 1)
+		'0', '1', '2', '3', '4':  # Notes d'arpège
+			var arp_idx = int(symbol)
+			_generate_arpeggio_note(chord, swung_time, step_length, arp_idx)
 		'.':  # Laisser sonner
 			_prolong_active_notes(step_length)
 		' ':  # Silence
@@ -432,6 +455,163 @@ func _handle_pitch_overlap(pitch: int, new_note_time: float) -> void:
 		else:
 			# La note est trop courte, la supprimer ou la garder minimale
 			prev_note.duration = 0.001
+
+
+func _generate_double_mute(chord: GuitarChord, time: float, step_length: float, is_strong: bool) -> void:
+	"""
+	Génère un double mute (deux mutes rapides: down puis up) dans un seul step.
+
+	Args:
+		chord: L'accord à jouer
+		time: Position temporelle
+		step_length: Durée totale du step
+		is_strong: Si true, utilise velocity_down_base, sinon velocity_down_light
+	"""
+	var half_step = step_length / 2.0
+
+	if is_strong:
+		# W = double mute fort
+		_generate_strum(chord, time, "down", config.velocity_down_base, time, true, half_step)
+		_generate_strum(chord, time + half_step, "up", config.velocity_down_base, time + half_step, true, half_step)
+	else:
+		# w = double mute léger
+		_generate_strum(chord, time, "down", config.velocity_down_light, time, true, half_step)
+		_generate_strum(chord, time + half_step, "up", config.velocity_down_light, time + half_step, true, half_step)
+
+
+func _generate_bass_note(chord: GuitarChord, time: float, step_length: float, bass_index: int) -> void:
+	"""
+	Génère une note de basse unique.
+
+	Args:
+		chord: L'accord courant
+		time: Position temporelle
+		step_length: Durée du step
+		bass_index: 0 pour basse principale (B), 1 pour basse alternative (b)
+	"""
+	var bass_notes = chord.get_bass_notes()
+	var pitch = bass_notes[bass_index]
+
+	# Gérer le chevauchement
+	_handle_pitch_overlap(pitch, time)
+
+	# Créer la note de basse
+	var note = {
+		"pitch": pitch,
+		"position": time,
+		"duration": step_length + config.note_overlap,
+		"velocity": int(clamp(config.single_note_velocity, 1, 127)),
+		"string_index": -1  # Pas de string_index pour les basses isolées
+	}
+
+	output_notes.append(note)
+	_last_note_by_pitch[pitch] = note
+	active_notes.clear()
+	active_notes.append(note)
+
+
+func _generate_arpeggio_note(chord: GuitarChord, time: float, step_length: float, arp_index: int) -> void:
+	"""
+	Génère une note d'arpège unique.
+
+	Args:
+		chord: L'accord courant
+		time: Position temporelle
+		step_length: Durée du step
+		arp_index: Index de la note d'arpège (0-4, de grave vers aigu)
+	"""
+	var pitch = chord.get_arp_note(arp_index)
+
+	# Gérer le chevauchement
+	_handle_pitch_overlap(pitch, time)
+
+	# Créer la note d'arpège
+	var note = {
+		"pitch": pitch,
+		"position": time,
+		"duration": step_length + config.note_overlap,
+		"velocity": int(clamp(config.single_note_velocity, 1, 127)),
+		"string_index": -1  # Pas de string_index pour les arpèges
+	}
+
+	output_notes.append(note)
+	_last_note_by_pitch[pitch] = note
+	active_notes.clear()
+	active_notes.append(note)
+
+
+func _apply_swing(time: float, step_index: int, step_length: float) -> float:
+	"""
+	Applique le swing aux beats syncopés (positions impaires dans un pattern 16 steps).
+
+	Le swing retarde les beats en positions impaires (1, 3, 5, 7, 9, 11, 13, 15):
+	- swing_amount = 0.0: aucun swing (binaire pur)
+	- swing_amount = 1.0: swing ternaire complet (ratio 2:1)
+	- swing_amount entre 0 et 1: swing intermédiaire
+
+	Args:
+		time: Position temporelle originale
+		step_index: Index du step dans le pattern (0-15)
+		step_length: Durée du step
+
+	Returns:
+		Position temporelle avec swing appliqué
+	"""
+	if config.swing_amount <= 0.0:
+		return time
+
+	# Appliquer le swing seulement sur les positions impaires (syncopées)
+	if step_index % 2 == 1:
+		# En swing ternaire (2:1), le beat syncopé est retardé de step_length/3
+		# swing_amount contrôle l'intensité du retard
+		var swing_offset = (step_length / 3.0) * config.swing_amount
+		return time + swing_offset
+
+	return time
+
+
+func _process_chord_transitions() -> void:
+	"""
+	Post-traitement des transitions d'accords.
+
+	Raccourcit les notes non communes entre deux accords consécutifs pour simuler
+	le changement de position du guitariste. Les notes communes peuvent rester legato.
+	"""
+	if chord_grid.size() < 2:
+		return  # Pas de transitions avec un seul accord ou moins
+
+	# Trier les accords par temps
+	var sorted_chords = chord_grid.duplicate()
+	sorted_chords.sort_custom(self, "_sort_by_time")
+
+	# Pour chaque transition
+	for i in range(sorted_chords.size() - 1):
+		var chord_before = sorted_chords[i]
+		var chord_after = sorted_chords[i + 1]
+
+		var transition_time = chord_after.time
+
+		# Obtenir les notes des deux accords
+		var notes_before = chord_before.get_notes()
+		var notes_after = chord_after.get_notes()
+
+		# Identifier les notes communes (même pitch)
+		var common_pitches = []
+		for pitch in notes_before:
+			if pitch in notes_after:
+				common_pitches.append(pitch)
+
+		# Raccourcir les notes non communes qui traversent la transition
+		for note in output_notes:
+			# Vérifier si la note appartient à l'accord précédent
+			if note.position >= chord_before.time and note.position < transition_time:
+				var note_end = note.position + note.duration
+
+				# Si la note traverse la transition et n'est pas commune
+				if note_end > transition_time and not (note.pitch in common_pitches):
+					# Raccourcir la note
+					var max_duration = (transition_time - note.position) * config.chord_transition_gap
+					note.duration = max_duration
 
 
 # ============================================================================

@@ -5,22 +5,42 @@ class_name StrumPattern
 Represents a 16-step strumming pattern with its own timing and configuration.
 
 Pattern symbols:
-  D = Down fort (strong downstroke)
-  d = Down léger (light downstroke)
-  U = Up fort (strong upstroke)
-  u = Up léger (light upstroke)
-  X = Muté fort (strong muted strum)
-  x = Muté léger (light muted strum, shorter and softer)
-  F = Flam DU (rapid Down-Up, strong, legato)
-  f = Flam du (rapid down-up, light, legato)
-  . = Laisser sonner (let ring / sustain)
-  ' ' = Silence (space = rest)
+  Strums:
+    D = Down fort (strong downstroke)
+    d = Down léger (light downstroke)
+    U = Up fort (strong upstroke)
+    u = Up léger (light upstroke)
+
+  Mutes:
+    X = Muté fort (strong muted strum)
+    x = Muté léger (light muted strum, shorter and softer)
+    W = Double mute fort (two fast muted strums: down+up, strong)
+    w = Double mute léger (two fast muted strums: down+up, light)
+
+  Flams:
+    F = Flam DU (rapid Down-Up, strong, legato)
+    f = Flam du (rapid down-up, light, legato)
+
+  Bass & Arpeggios:
+    B = Basse principale (main bass note - lowest)
+    b = Basse alternative (alternative bass note)
+    0, 1, 2, 3, 4 = Arpeggio notes (0=lowest, 4=highest)
+
+  Other:
+    . = Laisser sonner (let ring / sustain)
+    ' ' = Silence (space = rest)
 
 Usage:
 	var pattern = StrumPattern.new()
 	pattern.pattern = "D.uDudu D.uDudu "
 	pattern.step_beat_length = 0.25  # 16th notes
 	pattern.config_override = [{"velocity_down_base": 110}]
+
+Examples:
+	"D.uDudu D.uDudu "  # Classic folk strum
+	"B...b...B...b..."  # Alternating bass (country/folk)
+	"0.1.2.3.4.3.2.1."  # Ascending/descending arpeggio
+	"D.uWu.d.X.uWu.d."  # Rhythmic with double mutes
 """
 
 # The 16-character pattern string
