@@ -34,7 +34,7 @@ Usage:
 	var pattern = StrumPattern.new()
 	pattern.pattern = "D.uDudu D.uDudu "
 	pattern.step_beat_length = 0.25  # 16th notes
-	pattern.config_override = [{"velocity_down_base": 110}]
+	pattern.config_override = {"velocity_down_base": 110, "swing_amount": 0.3}
 
 Examples:
 	"D.uDudu D.uDudu "  # Classic folk strum
@@ -49,9 +49,9 @@ var pattern: String = "D...d...D...d..." setget set_pattern
 # Duration of each step in beats
 var step_beat_length: float = 0.25
 
-# Array of dictionaries to override FolkGuitarPlayer.config during this pattern
-# Example: [{"velocity_down_base": 110}, {"pick_position": 0.5}]
-var config_override: Array = []
+# Dictionary to override FolkGuitarPlayer.config during this pattern
+# Example: {"velocity_down_base": 110, "pick_position": 0.5}
+var config_override: Dictionary = {}
 
 
 func set_pattern(value: String) -> void:
@@ -78,7 +78,7 @@ func duplicate() -> StrumPattern:
 	return copy
 
 
-static func create(p_pattern: String, p_step_beat_length: float = 0.25, p_config_override: Array = []) -> StrumPattern:
+static func create(p_pattern: String, p_step_beat_length: float = 0.25, p_config_override: Dictionary = {}) -> StrumPattern:
 	"""Factory method to create a pattern with all parameters."""
 	var sp = StrumPattern.new()
 	sp.pattern = p_pattern

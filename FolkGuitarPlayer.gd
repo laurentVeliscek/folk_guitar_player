@@ -18,7 +18,7 @@ Usage:
 
 	# Create patterns (each is exactly 16 steps)
 	var pattern1 = StrumPattern.create("D.uDudu D.uDudu ", 0.25)
-	var pattern2 = StrumPattern.create("D...d...D...d...", 0.25, [{"velocity_down_base": 90}])
+	var pattern2 = StrumPattern.create("D...d...D...d...", 0.25, {"velocity_down_base": 90})
 	player.pattern_sequence = [pattern1, pattern2]
 
 	player.set_chord_grid(chords_array) # Array of GuitarChord objects
@@ -72,6 +72,9 @@ var active_notes: Array = []
 # Dictionary: pitch -> note Dictionary reference
 var _last_note_by_pitch: Dictionary = {}
 
+# Notes d'arpège actives (qui doivent être prolongées jusqu'à interruption)
+var _active_arpeggio_notes: Array = []
+
 # Configuration sauvegardée (pour restaurer après config_override)
 var _saved_config: Dictionary = {}
 
@@ -119,6 +122,7 @@ func generate() -> Array:
 	output_notes.clear()
 	active_notes.clear()
 	_last_note_by_pitch.clear()
+	_active_arpeggio_notes.clear()
 
 	if chord_grid.empty():
 		push_warning("FolkGuitarPlayer: Chord grid is empty")
@@ -141,6 +145,7 @@ func generate() -> Array:
 	var current_time = 0.0
 	var pattern_seq_index = 0
 	var pattern_step_index = 0
+	var previous_chord = null
 
 	while current_time < total_duration:
 		# Obtenir le pattern courant (boucler si nécessaire)
@@ -151,6 +156,12 @@ func generate() -> Array:
 
 		# Obtenir l'accord courant à cette position temporelle (avec boucle)
 		var current_chord = _get_chord_at_time(current_time, chords_duration)
+
+		# Détecter les changements d'accord et interrompre les arpèges
+		if previous_chord != null and current_chord != previous_chord:
+			_interrupt_arpeggio_notes(current_time)
+
+		previous_chord = current_chord
 
 		if current_chord == null:
 			# Ne devrait pas arriver, mais sécurité
@@ -181,6 +192,9 @@ func generate() -> Array:
 
 	# Restaurer la config au cas où
 	_restore_config()
+
+	# Tronquer les notes d'arpège restantes à la fin du morceau
+	_interrupt_arpeggio_notes(total_duration)
 
 	# Post-traitement: transitions d'accords
 	_process_chord_transitions()
@@ -229,18 +243,16 @@ func _get_chord_at_time(time: float, chords_duration: float) -> GuitarChord:
 	return chord_grid[chord_grid.size() - 1]
 
 
-func _apply_config_override(overrides: Array) -> void:
+func _apply_config_override(overrides: Dictionary) -> void:
 	"""Applique les overrides de configuration et sauvegarde les valeurs originales."""
 	if overrides.empty():
 		return
 
 	_saved_config.clear()
-	for override in overrides:
-		if override is Dictionary:
-			for key in override:
-				if config.has(key):
-					_saved_config[key] = config[key]
-					config[key] = override[key]
+	for key in overrides:
+		if config.has(key):
+			_saved_config[key] = config[key]
+			config[key] = overrides[key]
 
 
 func _restore_config() -> void:
@@ -259,24 +271,34 @@ func _process_symbol(symbol: String, chord: GuitarChord, time: float, step_lengt
 
 	match symbol:
 		'D':  # Down fort
+			_interrupt_arpeggio_notes(swung_time)
 			_generate_strum(chord, swung_time, "down", config.velocity_down_base, beat_position, false, step_length)
 		'd':  # Down léger
+			_interrupt_arpeggio_notes(swung_time)
 			_generate_strum(chord, swung_time, "down", config.velocity_down_light, beat_position, false, step_length)
 		'U':  # Up fort
+			_interrupt_arpeggio_notes(swung_time)
 			_generate_strum(chord, swung_time, "up", config.velocity_up_base, beat_position, false, step_length)
 		'u':  # Up léger
+			_interrupt_arpeggio_notes(swung_time)
 			_generate_strum(chord, swung_time, "up", config.velocity_up_light, beat_position, false, step_length)
 		'X':  # Muté fort
+			_interrupt_arpeggio_notes(swung_time)
 			_generate_strum(chord, swung_time, "down", config.velocity_down_base, beat_position, true, step_length)
 		'x':  # Muté léger (plus court et plus doux)
+			_interrupt_arpeggio_notes(swung_time)
 			_generate_strum(chord, swung_time, "down", config.velocity_down_light * 0.8, beat_position, true, step_length, true)
 		'F':  # Flam DU fort (Down-Up rapide legato)
+			_interrupt_arpeggio_notes(swung_time)
 			_generate_flam(chord, swung_time, step_length, true)
 		'f':  # Flam du léger (down-up rapide legato)
+			_interrupt_arpeggio_notes(swung_time)
 			_generate_flam(chord, swung_time, step_length, false)
 		'W':  # Double mute fort
+			_interrupt_arpeggio_notes(swung_time)
 			_generate_double_mute(chord, swung_time, step_length, true)
 		'w':  # Double mute léger
+			_interrupt_arpeggio_notes(swung_time)
 			_generate_double_mute(chord, swung_time, step_length, false)
 		'B':  # Basse principale
 			_generate_bass_note(chord, swung_time, step_length, 0)
@@ -288,7 +310,7 @@ func _process_symbol(symbol: String, chord: GuitarChord, time: float, step_lengt
 		'.':  # Laisser sonner
 			_prolong_active_notes(step_length)
 		' ':  # Silence
-			pass
+			_interrupt_arpeggio_notes(swung_time)
 		_:
 			push_warning("FolkGuitarPlayer: Unknown pattern symbol '%s' at time %s" % [symbol, time])
 
@@ -300,6 +322,7 @@ func clear() -> void:
 	output_notes.clear()
 	active_notes.clear()
 	_last_note_by_pitch.clear()
+	_active_arpeggio_notes.clear()
 	_saved_config.clear()
 
 
@@ -510,9 +533,39 @@ func _generate_bass_note(chord: GuitarChord, time: float, step_length: float, ba
 	active_notes.append(note)
 
 
+func _interrupt_arpeggio_notes(time: float) -> void:
+	"""
+	Interrompt (tronque) toutes les notes d'arpège actives au temps spécifié.
+
+	Cette fonction est appelée quand :
+	- Un accord est strummé (D, d, U, u, X, x, F, f, W, w)
+	- Un silence est rencontré (espace)
+	- Un changement d'accord se produit
+
+	Args:
+		time: Le temps auquel interrompre les notes d'arpège
+	"""
+	for note in _active_arpeggio_notes:
+		if note.position < time:
+			# Tronquer la note à ce moment (avec un petit gap)
+			var gap = 0.001
+			note.duration = time - note.position - gap
+			if note.duration < 0.001:
+				note.duration = 0.001
+
+	# Vider la liste des notes d'arpège actives
+	_active_arpeggio_notes.clear()
+
+
 func _generate_arpeggio_note(chord: GuitarChord, time: float, step_length: float, arp_index: int) -> void:
 	"""
-	Génère une note d'arpège unique.
+	Génère une note d'arpège unique avec sustain prolongé.
+
+	Les notes d'arpège se prolongent jusqu'à ce qu'elles soient interrompues par :
+	- La même note jouée à nouveau
+	- Un changement d'accord
+	- Un accord strummé (D, d, U, u, X, x, F, f, W, w)
+	- Un silence (espace)
 
 	Args:
 		chord: L'accord courant
@@ -525,17 +578,19 @@ func _generate_arpeggio_note(chord: GuitarChord, time: float, step_length: float
 	# Gérer le chevauchement
 	_handle_pitch_overlap(pitch, time)
 
-	# Créer la note d'arpège
+	# Créer la note d'arpège avec une durée longue par défaut (1000 beats)
+	# Elle sera tronquée plus tard par _interrupt_arpeggio_notes()
 	var note = {
 		"pitch": pitch,
 		"position": time,
-		"duration": step_length + config.note_overlap,
+		"duration": 1000.0,  # Durée très longue, sera tronquée par interruption
 		"velocity": int(clamp(config.single_note_velocity, 1, 127)),
 		"string_index": -1  # Pas de string_index pour les arpèges
 	}
 
 	output_notes.append(note)
 	_last_note_by_pitch[pitch] = note
+	_active_arpeggio_notes.append(note)  # Ajouter aux notes d'arpège actives
 	active_notes.clear()
 	active_notes.append(note)
 
