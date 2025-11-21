@@ -965,3 +965,126 @@ func get_stats() -> Dictionary:
 		"duration_max": dur_max,
 		"duration_avg": dur_avg
 	}
+
+
+func generate_ascii_tab(chars_per_beat: int = 4, line_width: int = 80, show_time_markers: bool = true) -> String:
+	"""
+	Génère une tablature ASCII à partir des notes générées par generate().
+
+	Format: ASCII tab standard avec 6 cordes (E A D G B E du grave vers aigu)
+
+	Args:
+		chars_per_beat: Nombre de caractères par beat (résolution horizontale, défaut: 4)
+		line_width: Largeur maximale d'une ligne avant de couper (défaut: 80)
+		show_time_markers: Afficher les marqueurs de temps au-dessus (défaut: true)
+
+	Returns:
+		String contenant la tablature ASCII complète
+
+	Example:
+		var player = FolkGuitarPlayer.new()
+		# ... configuration et generate() ...
+		var tab = player.generate_ascii_tab(4, 80, true)
+		print(tab)
+	"""
+	if output_notes.empty():
+		return "# No notes generated. Call generate() first.\n"
+
+	# Tuning standard (MIDI pitch pour cordes à vide)
+	var string_tuning = [40, 45, 50, 55, 59, 64]  # E2, A2, D3, G3, B3, E4
+	var string_names = ["E", "A", "D", "G", "B", "e"]  # Notation standard
+
+	# Calculer la durée totale et la largeur de la grille
+	var max_time = 0.0
+	for note in output_notes:
+		var note_end = note.position + note.duration
+		if note_end > max_time:
+			max_time = note_end
+
+	var total_chars = int(ceil(max_time * chars_per_beat))
+
+	# Créer une grille pour chaque corde (6 cordes × total_chars colonnes)
+	var grid = []
+	for i in range(6):
+		var line = []
+		for j in range(total_chars):
+			line.append("-")
+		grid.append(line)
+
+	# Placer chaque note dans la grille
+	for note in output_notes:
+		var char_pos = int(note.position * chars_per_beat)
+		if char_pos >= total_chars:
+			continue
+
+		var string_idx = -1
+		var fret = -1
+
+		# Déterminer la corde et la frette
+		if note.string_index >= 0 and note.string_index < 6:
+			# Note avec string_index connu (strum)
+			# string_index dans chord.notes: 0=grave (E), 5=aigu (e)
+			# Même indexation dans string_tuning
+			string_idx = note.string_index
+			fret = note.pitch - string_tuning[string_idx]
+		else:
+			# Note sans string_index (bass, arpeggio) - trouver la meilleure corde
+			for i in range(6):
+				var potential_fret = note.pitch - string_tuning[i]
+				if potential_fret >= 0 and potential_fret <= 22:  # Frette valide
+					string_idx = i
+					fret = potential_fret
+					break
+
+		# Placer la note si valide
+		if string_idx >= 0 and fret >= 0 and fret <= 22:
+			var fret_str = str(fret)
+
+			# Vérifier qu'on a assez de place pour le numéro de frette
+			if char_pos + fret_str.length() <= total_chars:
+				# Placer chaque chiffre du numéro de frette
+				for i in range(fret_str.length()):
+					if char_pos + i < total_chars:
+						grid[string_idx][char_pos + i] = fret_str[i]
+
+	# Formater la sortie en plusieurs lignes si nécessaire
+	var result = ""
+	var num_lines = int(ceil(float(total_chars) / line_width))
+
+	for line_idx in range(num_lines):
+		var start_char = line_idx * line_width
+		var end_char = min((line_idx + 1) * line_width, total_chars)
+		var line_length = end_char - start_char
+
+		# Marqueurs de temps si demandé
+		if show_time_markers:
+			var time_marker = " "
+			var i = 0
+			while i < line_length:
+				var abs_pos = start_char + i
+				if abs_pos % chars_per_beat == 0:
+					var beat = int(abs_pos / chars_per_beat)
+					var beat_str = str(beat)
+					time_marker += beat_str
+					i += beat_str.length()
+				else:
+					time_marker += " "
+					i += 1
+
+			result += time_marker.rstrip(" ") + "\n"
+
+		# Les 6 cordes (de l'aigu vers le grave en affichage)
+		for string_idx in range(5, -1, -1):
+			var line_str = string_names[string_idx] + "|"
+
+			for i in range(start_char, end_char):
+				line_str += grid[string_idx][i]
+
+			line_str += "|"
+			result += line_str + "\n"
+
+		# Ligne vide entre les sections
+		if line_idx < num_lines - 1:
+			result += "\n"
+
+	return result
