@@ -169,13 +169,13 @@ func midiNotes_with_string() -> Array:
 			continue
 		var open_midi = int(tuning[s])
 		if fret_rel == 0:
-			var n = {"string":s, "midi":open_midi}
+			var n = {"string":s+1, "midi":open_midi}
 			out.append(n)
 			#out.append(open_midi)
 		else:
 			# fret absolue = (base_fret - 1) + fret_rel
 			var add = (base_fret - 1) + fret_rel
-			var n = {"string":s, "midi":open_midi + add}
+			var n = {"string":s+1, "midi":open_midi + add}
 			out.append(n)
 	return out
 
@@ -432,6 +432,26 @@ func get_bass_notes()->Array:
 		else :
 			return [b2,b1]
 
+# retourne 2 notes de basse [b1,b2] b1 est la fondamentale (en principe)
+# si accord de 4 notes on renvoie [b1,b1]
+func get_bass_notes_with_string()->Array:
+	var notes = []
+	var root = root_pitch_class()
+	var chord_notes = []
+	for e in midiNotes_with_string():
+		chord_notes.append(e)
+	
+	if chord_notes.size() < 5:
+		var b1 = chord_notes[0]
+		return [b1,b1]
+	else :
+		var b1 = chord_notes[0]
+		var b2 = chord_notes[1]
+		if b1["midi"] % 12  == root % 12:
+			return [b1,b2]
+		else :
+			return [b2,b1]
+
 func get_arp_note(idx:int)-> int:
 	var notes = midiNotes()
 	match idx:
@@ -445,7 +465,7 @@ func get_arp_note(idx:int)-> int:
 				else:
 					return notes[-4]
 			_:
-				return notes[-1 * notes.size()]
+				return notes[idx % notes.size()]
 		
 		
 func get_arp_note_with_string(idx:int)-> Dictionary:
@@ -461,4 +481,15 @@ func get_arp_note_with_string(idx:int)-> Dictionary:
 				else:
 					return notes[-4]
 			_:
-				return notes[-1 * notes.size()]
+				return notes[idx % notes.size()]
+
+func get_tab_absolute_as_array()->Array:
+	var tab = []
+	for s in range(0,6):
+		if frets[s] == -1:
+			tab.append("x")
+		else :
+			tab.append(str(- 1 + frets[s] + base_fret))
+			
+	return tab
+	
