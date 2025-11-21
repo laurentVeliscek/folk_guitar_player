@@ -74,6 +74,7 @@ var config_override = {
 	"swing_amount": 0.2,  # Swing: 0.0 = binaire pur, 1.0 = ternaire, entre = intermédiaire
 	"chord_transition_gap": 0.95,  # Facteur de raccourcissement des notes avant transition (0.8 = 80%)
 	"single_note_velocity": 90,  # Vélocité pour les notes simples (basses, arpèges)
+	"max_chords_strings": 4  # Nombre de cordes max pour accords/mutes (1-6), filtre les graves
 }
 
 func clone()->StrumPattern:

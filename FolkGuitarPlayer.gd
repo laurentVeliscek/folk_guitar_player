@@ -107,6 +107,55 @@ func get_configuration() -> Dictionary:
 	"""Retourne la configuration actuelle."""
 	return config.duplicate()
 
+#get_strum_pattern_index_at_pos
+func get_strum_pattern_index_at_pos(pos_in_beats: float)-> int:
+	"""
+	Retourne l'index StrumPattern qui joue à une position donnée (en beats).
+
+	Args:
+		pos_in_beats: Position en beats
+
+	Returns:
+		StrumPattern actif à cette position, ou -1 si :
+		- chord_grid est vide
+		- pattern_sequence est vide
+		- position est hors de la plage de chord_grid
+
+	Note:
+		Prend en compte le bouclage de pattern_sequence.
+	"""
+	if chord_grid.empty():
+		return -1
+
+	if pattern_sequence.empty():
+		return -1
+
+	# Calculer la durée de chord_grid
+	var chords_duration = _calculate_chords_duration()
+
+	# Vérifier que la position est dans la plage
+	if pos_in_beats < 0 or pos_in_beats >= chords_duration:
+		return -1
+
+	# Calculer la durée totale des patterns
+	var patterns_duration = _calculate_patterns_duration()
+
+	# Calculer quelle position dans la séquence de patterns
+	var time_in_patterns = fmod(pos_in_beats, patterns_duration) if patterns_duration > 0 else pos_in_beats
+
+	# Trouver le pattern correspondant
+	var accumulated_time = 0.0
+	var pattern_index = 0
+	for pattern in pattern_sequence:
+		var pattern_duration = pattern.get_duration()
+		if time_in_patterns >= accumulated_time and time_in_patterns < accumulated_time + pattern_duration:
+			return pattern_index
+		accumulated_time += pattern_duration
+		pattern_index += 1
+
+	# Fallback: retourner le dernier pattern
+	return pattern_sequence.size() - 1
+
 
 func get_strum_pattern_at_pos(pos_in_beats: float):
 	"""
