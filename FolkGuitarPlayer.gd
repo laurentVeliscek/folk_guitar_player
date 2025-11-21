@@ -54,6 +54,7 @@ var config = {
 	"swing_amount": 0.0,  # Swing: 0.0 = binaire pur, 1.0 = ternaire, entre = intermédiaire
 	"chord_transition_gap": 0.8,  # Facteur de raccourcissement des notes avant transition (0.8 = 80%)
 	"single_note_velocity": 90,  # Vélocité pour les notes simples (basses, arpèges)
+	"max_chords_strings": 6,  # Nombre de cordes max pour accords/mutes (1-6), filtre les graves
 }
 
 # Grille d'accords
@@ -105,6 +106,53 @@ func set_configuration(params: Dictionary) -> void:
 func get_configuration() -> Dictionary:
 	"""Retourne la configuration actuelle."""
 	return config.duplicate()
+
+
+func get_strum_pattern_at_pos(pos_in_beats: float):
+	"""
+	Retourne le StrumPattern qui joue à une position donnée (en beats).
+
+	Args:
+		pos_in_beats: Position en beats
+
+	Returns:
+		StrumPattern actif à cette position, ou null si :
+		- chord_grid est vide
+		- pattern_sequence est vide
+		- position est hors de la plage de chord_grid
+
+	Note:
+		Prend en compte le bouclage de pattern_sequence.
+	"""
+	if chord_grid.empty():
+		return null
+
+	if pattern_sequence.empty():
+		return null
+
+	# Calculer la durée de chord_grid
+	var chords_duration = _calculate_chords_duration()
+
+	# Vérifier que la position est dans la plage
+	if pos_in_beats < 0 or pos_in_beats >= chords_duration:
+		return null
+
+	# Calculer la durée totale des patterns
+	var patterns_duration = _calculate_patterns_duration()
+
+	# Calculer quelle position dans la séquence de patterns
+	var time_in_patterns = fmod(pos_in_beats, patterns_duration) if patterns_duration > 0 else pos_in_beats
+
+	# Trouver le pattern correspondant
+	var accumulated_time = 0.0
+	for pattern in pattern_sequence:
+		var pattern_duration = pattern.get_duration()
+		if time_in_patterns >= accumulated_time and time_in_patterns < accumulated_time + pattern_duration:
+			return pattern
+		accumulated_time += pattern_duration
+
+	# Fallback: retourner le dernier pattern
+	return pattern_sequence[pattern_sequence.size() - 1]
 
 
 func generate() -> Array:
@@ -301,12 +349,12 @@ func _process_symbol(symbol: String, chord: GuitarChord, time: float, step_lengt
 			_interrupt_arpeggio_notes(swung_time)
 			_generate_double_mute(chord, swung_time, step_length, false)
 		'B':  # Basse principale
-			_generate_bass_note(chord, swung_time, step_length, 0)
+			_generate_bass_note(chord, swung_time, step_length, 0, beat_position)
 		'b':  # Basse alternative
-			_generate_bass_note(chord, swung_time, step_length, 1)
+			_generate_bass_note(chord, swung_time, step_length, 1, beat_position)
 		'0', '1', '2', '3', '4':  # Notes d'arpège
 			var arp_idx = int(symbol)
-			_generate_arpeggio_note(chord, swung_time, step_length, arp_idx)
+			_generate_arpeggio_note(chord, swung_time, step_length, arp_idx, beat_position)
 		'.':  # Laisser sonner
 			_prolong_active_notes(step_length)
 		' ':  # Silence
@@ -348,19 +396,26 @@ func _generate_strum(chord: GuitarChord, time: float, direction: String, base_ve
 	var chord_notes = chord.get_notes()
 	var num_chord_notes = chord_notes.size()
 
+	# Appliquer le filtre max_chords_strings (garder les notes les plus aiguës)
+	var max_strings = int(clamp(config.max_chords_strings, 1, 6))
+	var start_index = 0
+	if num_chord_notes > max_strings:
+		# Filtrer les notes les plus graves, garder les plus aiguës
+		start_index = num_chord_notes - max_strings
+
 	# Calculer la durée du strum
 	var strum_duration = _calculate_strum_duration()
 
 	# Déterminer l'ordre des cordes (adaptation automatique à 4, 5, ou 6 notes)
 	var string_order = []
 	if direction == "down":
-		# Graves vers aiguës (0 -> n)
-		for i in range(num_chord_notes):
+		# Graves vers aiguës (start_index -> n)
+		for i in range(start_index, num_chord_notes):
 			if not chord.is_string_muted(i):
 				string_order.append(i)
 	else:  # "up"
-		# Aiguës vers graves (n -> 0)
-		for i in range(num_chord_notes - 1, -1, -1):
+		# Aiguës vers graves (n -> start_index)
+		for i in range(num_chord_notes - 1, start_index - 1, -1):
 			if not chord.is_string_muted(i):
 				string_order.append(i)
 
@@ -502,7 +557,7 @@ func _generate_double_mute(chord: GuitarChord, time: float, step_length: float, 
 		_generate_strum(chord, time + half_step, "up", config.velocity_down_light, time + half_step, true, half_step)
 
 
-func _generate_bass_note(chord: GuitarChord, time: float, step_length: float, bass_index: int) -> void:
+func _generate_bass_note(chord: GuitarChord, time: float, step_length: float, bass_index: int, beat_position: float = 0.0) -> void:
 	"""
 	Génère une note de basse unique.
 
@@ -511,6 +566,7 @@ func _generate_bass_note(chord: GuitarChord, time: float, step_length: float, ba
 		time: Position temporelle
 		step_length: Durée du step
 		bass_index: 0 pour basse principale (B), 1 pour basse alternative (b)
+		beat_position: Position en beats (pour déterminer les accents)
 	"""
 	var bass_notes = chord.get_bass_notes()
 	var pitch = bass_notes[bass_index]
@@ -518,12 +574,21 @@ func _generate_bass_note(chord: GuitarChord, time: float, step_length: float, ba
 	# Gérer le chevauchement
 	_handle_pitch_overlap(pitch, time)
 
+	# Déterminer si on est sur un temps fort (accent)
+	var accent_factor = 1.0
+	var beat_mod = fmod(beat_position, 1.0)
+	if beat_mod < 0.01:  # Tolérance pour erreurs de floating point
+		accent_factor = config.accent_downbeat_factor
+
+	# Calculer la vélocité avec accent
+	var velocity = config.single_note_velocity * accent_factor
+
 	# Créer la note de basse
 	var note = {
 		"pitch": pitch,
 		"position": time,
 		"duration": step_length + config.note_overlap,
-		"velocity": int(clamp(config.single_note_velocity, 1, 127)),
+		"velocity": int(clamp(velocity, 1, 127)),
 		"string_index": -1  # Pas de string_index pour les basses isolées
 	}
 
@@ -557,7 +622,7 @@ func _interrupt_arpeggio_notes(time: float) -> void:
 	_active_arpeggio_notes.clear()
 
 
-func _generate_arpeggio_note(chord: GuitarChord, time: float, step_length: float, arp_index: int) -> void:
+func _generate_arpeggio_note(chord: GuitarChord, time: float, step_length: float, arp_index: int, beat_position: float = 0.0) -> void:
 	"""
 	Génère une note d'arpège unique avec sustain prolongé.
 
@@ -572,11 +637,21 @@ func _generate_arpeggio_note(chord: GuitarChord, time: float, step_length: float
 		time: Position temporelle
 		step_length: Durée du step
 		arp_index: Index de la note d'arpège (0-4, de grave vers aigu)
+		beat_position: Position en beats (pour déterminer les accents)
 	"""
 	var pitch = chord.get_arp_note(arp_index)
 
 	# Gérer le chevauchement
 	_handle_pitch_overlap(pitch, time)
+
+	# Déterminer si on est sur un temps fort (accent)
+	var accent_factor = 1.0
+	var beat_mod = fmod(beat_position, 1.0)
+	if beat_mod < 0.01:  # Tolérance pour erreurs de floating point
+		accent_factor = config.accent_downbeat_factor
+
+	# Calculer la vélocité avec accent
+	var velocity = config.single_note_velocity * accent_factor
 
 	# Créer la note d'arpège avec une durée longue par défaut (1000 beats)
 	# Elle sera tronquée plus tard par _interrupt_arpeggio_notes()
@@ -584,7 +659,7 @@ func _generate_arpeggio_note(chord: GuitarChord, time: float, step_length: float
 		"pitch": pitch,
 		"position": time,
 		"duration": 1000.0,  # Durée très longue, sera tronquée par interruption
-		"velocity": int(clamp(config.single_note_velocity, 1, 127)),
+		"velocity": int(clamp(velocity, 1, 127)),
 		"string_index": -1  # Pas de string_index pour les arpèges
 	}
 
