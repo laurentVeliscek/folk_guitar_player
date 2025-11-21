@@ -156,6 +156,31 @@ func midiNotes() -> PoolIntArray:
 			out.append(open_midi + add)
 	return PoolIntArray(out)
 
+
+
+# --- Conversion en notes MIDI (toutes les cordes non muettes)
+func midiNotes_with_string() -> Array:
+	var out = []
+	if not is_valid():
+		return []
+	for s in range(6):	# 0..5 correspond corde 6..1
+		var fret_rel = int(frets[s])
+		if fret_rel < 0:
+			continue
+		var open_midi = int(tuning[s])
+		if fret_rel == 0:
+			var n = {"string":s, "midi":open_midi}
+			out.append(n)
+			#out.append(open_midi)
+		else:
+			# fret absolue = (base_fret - 1) + fret_rel
+			var add = (base_fret - 1) + fret_rel
+			var n = {"string":s, "midi":open_midi + add}
+			out.append(n)
+	return out
+
+
+
 # Pitch-class de la fondamentale (0=C, 1=C#/Db, ..., 11=B)
 func root_pitch_class() -> int:
 	if root_pc >= 0:
@@ -423,4 +448,17 @@ func get_arp_note(idx:int)-> int:
 				return notes[-1 * notes.size()]
 		
 		
-
+func get_arp_note_with_string(idx:int)-> Dictionary:
+	var notes = midiNotes_with_string()
+	match idx:
+			4: return notes[-1]
+			3: return notes[-2]
+			2: return notes[-3]
+			1: return notes[-4]
+			0: 
+				if notes.size() > 4:
+					return notes[-5]
+				else:
+					return notes[-4]
+			_:
+				return notes[-1 * notes.size()]
