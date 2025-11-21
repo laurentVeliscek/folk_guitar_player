@@ -969,9 +969,10 @@ func get_stats() -> Dictionary:
 
 func generate_ascii_tab(chars_per_beat: int = 4, line_width: int = 80, show_time_markers: bool = true) -> String:
 	"""
-	Génère une tablature ASCII à partir des notes générées par generate().
+	Génère une tablature ASCII quantizée à partir de la grille d'accords et du pattern.
 
-	Format: ASCII tab standard avec 6 cordes (E A D G B E du grave vers aigu)
+	Format: ASCII tab standard avec 6 cordes (E A D G B e du grave vers aigu)
+	La tablature est quantizée (comme une partition) : pas de swing, strum aligné.
 
 	Args:
 		chars_per_beat: Nombre de caractères par beat (résolution horizontale, défaut: 4)
@@ -987,23 +988,22 @@ func generate_ascii_tab(chars_per_beat: int = 4, line_width: int = 80, show_time
 		var tab = player.generate_ascii_tab(4, 80, true)
 		print(tab)
 	"""
-	if output_notes.empty():
-		return "# No notes generated. Call generate() first.\n"
+	if chord_grid.empty():
+		return "# No chords in chord_grid.\n"
 
-	# Tuning standard (MIDI pitch pour cordes à vide)
-	var string_tuning = [40, 45, 50, 55, 59, 64]  # E2, A2, D3, G3, B3, E4
-	var string_names = ["E", "A", "D", "G", "B", "e"]  # Notation standard
+	if pattern_sequence.empty():
+		return "# No patterns in pattern_sequence.\n"
 
-	# Calculer la durée totale et la largeur de la grille
-	var max_time = 0.0
-	for note in output_notes:
-		var note_end = note.position + note.duration
-		if note_end > max_time:
-			max_time = note_end
+	var string_names = ["E", "A", "D", "G", "B", "e"]  # Notation standard (grave vers aigu)
 
-	var total_chars = int(ceil(max_time * chars_per_beat))
+	# Calculer les durées
+	var chords_duration = _calculate_chords_duration()
+	var patterns_duration = _calculate_patterns_duration()
+	var total_duration = max(chords_duration, patterns_duration)
+	var total_chars = int(ceil(total_duration * chars_per_beat))
 
 	# Créer une grille pour chaque corde (6 cordes × total_chars colonnes)
+	# Chaque cellule contient soit "-" soit un caractère de frette ("0", "1", ..., "x")
 	var grid = []
 	for i in range(6):
 		var line = []
@@ -1011,41 +1011,45 @@ func generate_ascii_tab(chars_per_beat: int = 4, line_width: int = 80, show_time
 			line.append("-")
 		grid.append(line)
 
-	# Placer chaque note dans la grille
-	for note in output_notes:
-		var char_pos = int(note.position * chars_per_beat)
-		if char_pos >= total_chars:
+	# Parcourir le temps quantizé selon les patterns
+	var current_time = 0.0
+	var pattern_seq_index = 0
+	var pattern_step_index = 0
+
+	while current_time < total_duration:
+		# Obtenir le pattern et l'accord courants
+		var current_pattern = pattern_sequence[pattern_seq_index % pattern_sequence.size()]
+		var current_chord = _get_chord_at_time(current_time, chords_duration)
+
+		if current_chord == null:
+			# Avancer au prochain step
+			current_time += current_pattern.step_beat_length
+			pattern_step_index += 1
+			if pattern_step_index >= 16:
+				pattern_step_index = 0
+				pattern_seq_index += 1
 			continue
 
-		var string_idx = -1
-		var fret = -1
+		# Obtenir le symbole du pattern
+		var symbol = current_pattern.pattern[pattern_step_index]
 
-		# Déterminer la corde et la frette
-		if note.string_index >= 0 and note.string_index < 6:
-			# Note avec string_index connu (strum)
-			# string_index dans chord.notes: 0=grave (E), 5=aigu (e)
-			# Même indexation dans string_tuning
-			string_idx = note.string_index
-			fret = note.pitch - string_tuning[string_idx]
-		else:
-			# Note sans string_index (bass, arpeggio) - trouver la meilleure corde
-			for i in range(6):
-				var potential_fret = note.pitch - string_tuning[i]
-				if potential_fret >= 0 and potential_fret <= 22:  # Frette valide
-					string_idx = i
-					fret = potential_fret
-					break
+		# Position quantizée dans la grille (en caractères)
+		var char_pos = int(current_time * chars_per_beat)
 
-		# Placer la note si valide
-		if string_idx >= 0 and fret >= 0 and fret <= 22:
-			var fret_str = str(fret)
+		if char_pos >= total_chars:
+			break
 
-			# Vérifier qu'on a assez de place pour le numéro de frette
-			if char_pos + fret_str.length() <= total_chars:
-				# Placer chaque chiffre du numéro de frette
-				for i in range(fret_str.length()):
-					if char_pos + i < total_chars:
-						grid[string_idx][char_pos + i] = fret_str[i]
+		# Traiter le symbole et placer dans la grille
+		_place_symbol_in_tab_grid(grid, symbol, current_chord, char_pos, total_chars)
+
+		# Avancer dans le temps
+		current_time += current_pattern.step_beat_length
+		pattern_step_index += 1
+
+		# Passer au pattern suivant si on a fini les 16 pas
+		if pattern_step_index >= 16:
+			pattern_step_index = 0
+			pattern_seq_index += 1
 
 	# Formater la sortie en plusieurs lignes si nécessaire
 	var result = ""
@@ -1088,3 +1092,96 @@ func generate_ascii_tab(chars_per_beat: int = 4, line_width: int = 80, show_time
 			result += "\n"
 
 	return result
+
+
+func _place_symbol_in_tab_grid(grid: Array, symbol: String, chord: GuitarChord, char_pos: int, total_chars: int) -> void:
+	"""
+	Place un symbole dans la grille de tablature.
+
+	Args:
+		grid: Grille 6×total_chars
+		symbol: Symbole du pattern ('D', 'B', '0', etc.)
+		chord: Accord courant
+		char_pos: Position en caractères dans la grille
+		total_chars: Nombre total de caractères
+	"""
+	match symbol:
+		'D', 'd', 'U', 'u', 'X', 'x', 'F', 'f', 'W', 'w':
+			# Strum ou mute : afficher l'accord complet (toutes les cordes alignées)
+			var tab_array = chord.get_tab_absolute_as_array()
+
+			# tab_array va de la 6ème corde (grave) à la 1ère (aigu)
+			# grid[0] = corde E grave (6ème corde)
+			# grid[5] = corde e aigu (1ère corde)
+			for string_idx in range(6):
+				if string_idx < tab_array.size():
+					var fret_str = tab_array[string_idx]
+					_place_string_in_grid(grid, string_idx, char_pos, fret_str, total_chars)
+
+		'B':  # Basse principale
+			var bass_notes = chord.get_bass_notes_with_string()
+			if bass_notes.size() > 0:
+				var bass_note = bass_notes[0]  # {midi: int, string: int}
+				var string_idx = bass_note.string
+				var fret = _calculate_fret_from_midi(bass_note.midi, string_idx)
+				_place_string_in_grid(grid, string_idx, char_pos, str(fret), total_chars)
+
+		'b':  # Basse alternative
+			var bass_notes = chord.get_bass_notes_with_string()
+			if bass_notes.size() > 1:
+				var bass_note = bass_notes[1]  # {midi: int, string: int}
+				var string_idx = bass_note.string
+				var fret = _calculate_fret_from_midi(bass_note.midi, string_idx)
+				_place_string_in_grid(grid, string_idx, char_pos, str(fret), total_chars)
+
+		'0', '1', '2', '3', '4':  # Notes d'arpège
+			var arp_idx = int(symbol)
+			var arp_note = chord.get_arp_note_with_string(arp_idx)  # {midi: int, string: int}
+			var string_idx = arp_note.string
+			var fret = _calculate_fret_from_midi(arp_note.midi, string_idx)
+			_place_string_in_grid(grid, string_idx, char_pos, str(fret), total_chars)
+
+		'.', ' ':
+			# Laisser sonner ou silence : ne rien placer
+			pass
+
+
+func _place_string_in_grid(grid: Array, string_idx: int, char_pos: int, fret_str: String, total_chars: int) -> void:
+	"""
+	Place une chaîne de caractères (numéro de frette ou "x") dans la grille.
+
+	Args:
+		grid: Grille de tablature
+		string_idx: Index de la corde (0=E grave, 5=e aigu)
+		char_pos: Position de départ en caractères
+		fret_str: Chaîne à placer ("0", "12", "x", etc.)
+		total_chars: Nombre total de caractères dans la grille
+	"""
+	if string_idx < 0 or string_idx >= 6:
+		return
+
+	# Placer chaque caractère de la chaîne
+	for i in range(fret_str.length()):
+		var pos = char_pos + i
+		if pos < total_chars:
+			grid[string_idx][pos] = fret_str[i]
+
+
+func _calculate_fret_from_midi(midi_pitch: int, string_idx: int) -> int:
+	"""
+	Calcule le numéro de frette à partir du pitch MIDI et de l'index de corde.
+
+	Args:
+		midi_pitch: Pitch MIDI
+		string_idx: Index de la corde (0=E grave, 5=e aigu)
+
+	Returns:
+		Numéro de frette (0-22)
+	"""
+	var string_tuning = [40, 45, 50, 55, 59, 64]  # E2, A2, D3, G3, B3, E4
+
+	if string_idx < 0 or string_idx >= 6:
+		return 0
+
+	var fret = midi_pitch - string_tuning[string_idx]
+	return int(clamp(fret, 0, 22))
