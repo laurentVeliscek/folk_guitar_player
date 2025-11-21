@@ -47,14 +47,34 @@ Examples:
 
 
 # The 16-character pattern string
-var pattern: String = "D...d...D...d..." setget set_pattern
+var pattern: String = "D...u...D...u..." setget set_pattern
 
 # Duration of each step in beats
 var step_beat_length: float = 0.5
 
 # Dictionary to override FolkGuitarPlayer.config during this pattern
 # Example: {"velocity_down_base": 110, "pick_position": 0.5}
-var config_override: Dictionary = {}
+var config_override = {
+	
+	"strum_duration_min": 0.05,  # Durée minimale de balayette (en beats)
+	"strum_duration_max": 0.1,  # Durée maximale de balayette (en beats)
+	"velocity_curve_shape": "gaussian",  # gaussian, linear, flat
+	"velocity_randomization": 0.05,  # Facteur de randomisation (0-1)
+	"accent_downbeat_factor": 1.3,  # Multiplication vélocité temps forts
+	"mute_duration": 0.02,  # Durée des notes mutées (en beats)
+	"humanize_timing": true,  # Micro-décalages temporels
+	"timing_variance": 0.005,  # Variance temporelle (en beats)
+	"velocity_down_base": 100,  # Vélocité de base pour Down fort
+	"velocity_down_light": 50,  # Vélocité de base pour down léger
+	"velocity_up_base": 90,  # Vélocité de base pour Up fort
+	"velocity_up_light": 40,  # Vélocité de base pour up léger
+	"note_overlap": 0.02,  # Léger overlap pour éviter les trous (en beats)
+	"pick_position": 0.75,  # Position du médiateur: -1.0 (graves) à 1.0 (aiguës), 0.0 = neutre
+	"pick_position_influence": .9,  # Intensité de l'effet (0.0 = aucun, 1.0 = maximum)
+	"swing_amount": 0.2,  # Swing: 0.0 = binaire pur, 1.0 = ternaire, entre = intermédiaire
+	"chord_transition_gap": 0.95,  # Facteur de raccourcissement des notes avant transition (0.8 = 80%)
+	"single_note_velocity": 90,  # Vélocité pour les notes simples (basses, arpèges)
+}
 
 func clone()->StrumPattern:
 	var s:StrumPattern = get_script().new()
